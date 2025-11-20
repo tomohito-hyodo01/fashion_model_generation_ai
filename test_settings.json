@@ -1,0 +1,27 @@
+{
+  "version": "2.0",
+  "exported_at": "2025-11-15T08:12:25.763262",
+  "model_attributes": {
+    "gender": "female",
+    "age_range": "20s",
+    "ethnicity": "asian",
+    "body_type": "standard",
+    "pose": "front",
+    "background": "white"
+  },
+  "generation_config": {
+    "size": "1024x1024",
+    "num_outputs": 2,
+    "quality": "standard"
+  },
+  "garments": [
+    {
+      "type": "TOP",
+      "path": "test_top.png"
+    },
+    {
+      "type": "BOTTOM",
+      "path": "test_bottom.png"
+    }
+  ]
+}

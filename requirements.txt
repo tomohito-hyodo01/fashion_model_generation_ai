@@ -1,0 +1,43 @@
+# GUI
+PySide6>=6.6.0
+PySide6-Addons>=6.6.0
+
+# Image Processing
+Pillow>=10.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+scikit-image>=0.22.0
+
+# API Communication
+openai>=1.0.0
+requests>=2.31.0
+aiohttp>=3.9.0
+
+# Google Cloud (optional for Vertex AI)
+google-cloud-aiplatform>=1.40.0
+google-generativeai>=0.8.0
+google-genai>=0.2.0
+
+# Security
+cryptography>=41.0.0
+pywin32>=306
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0
+pydantic>=2.5.0
+
+# Fidelity Checking
+lpips>=0.1.4
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-qt>=4.2.0
+
+# Build
+pyinstaller>=6.0.0
+
+# Pose Detection (Optional)
+# mediapipe>=0.10.0  # Python 3.12との互換性問題のため一時的にコメントアウト
+# 必要な場合は手動でインストール: pip install mediapipe==0.10.9
