@@ -80,35 +80,19 @@ class HistoryItemWidget(QWidget):
         # ボタン
         btn_layout = QVBoxLayout()
         
-        # お気に入りボタン
-        self.fav_btn = QPushButton("★" if self.history_data["is_favorite"] else "☆")
-        self.fav_btn.setFixedSize(30, 30)
-        self.fav_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                font-size: 16pt;
-                color: #f39c12;
-            }
-            QPushButton:hover {
-                color: #e67e22;
-            }
-        """)
-        self.fav_btn.clicked.connect(lambda: self.favorite_toggled.emit(self.history_data["id"]))
-        btn_layout.addWidget(self.fav_btn)
-        
-        # 削除ボタン
+        # 削除ボタンのみ（お気に入り機能は削除）
         delete_btn = QPushButton("×")
         delete_btn.setFixedSize(30, 30)
         delete_btn.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                border: none;
-                font-size: 16pt;
-                color: #e74c3c;
+                background-color: #3498db;
+                color: white;
+                font-weight: bold;
+                border-radius: 5px;
+                padding: 2px;
             }
             QPushButton:hover {
-                color: #c0392b;
+                background-color: #2980b9;
             }
         """)
         delete_btn.clicked.connect(lambda: self.delete_requested.emit(self.history_data["id"]))
@@ -134,10 +118,6 @@ class HistoryItemWidget(QWidget):
         pixmap.loadFromData(buffer.getvalue())
         return pixmap
     
-    def update_favorite_status(self, is_favorite: bool):
-        """お気に入り状態を更新"""
-        self.history_data["is_favorite"] = is_favorite
-        self.fav_btn.setText("★" if is_favorite else "☆")
 
 
 class HistoryPanel(QWidget):
@@ -155,28 +135,10 @@ class HistoryPanel(QWidget):
         """UIをセットアップ"""
         layout = QVBoxLayout(self)
         
-        # タイトル
-        title_label = QLabel("📜 生成履歴")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14pt; padding: 10px;")
-        layout.addWidget(title_label)
-        
-        # フィルター
-        filter_layout = QHBoxLayout()
-        
+        # フィルターコンボボックス（非表示で保持、内部でのみ使用）
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["すべて", "お気に入り", "種類違い", "角度違い"])
-        self.filter_combo.currentTextChanged.connect(self._on_filter_changed)
-        filter_layout.addWidget(QLabel("表示:"))
-        filter_layout.addWidget(self.filter_combo)
-        
-        filter_layout.addStretch()
-        
-        # 更新ボタン
-        refresh_btn = QPushButton("更新")
-        refresh_btn.clicked.connect(self._load_history)
-        filter_layout.addWidget(refresh_btn)
-        
-        layout.addLayout(filter_layout)
+        self.filter_combo.setVisible(False)  # 非表示にする
         
         # 履歴リスト
         self.history_list = QListWidget()
@@ -222,7 +184,6 @@ class HistoryPanel(QWidget):
                 # ウィジェットを作成
                 item_widget = HistoryItemWidget(history, thumbnails[0])
                 item_widget.item_clicked.connect(self._on_history_clicked)
-                item_widget.favorite_toggled.connect(self._on_favorite_toggled)
                 item_widget.delete_requested.connect(self._on_delete_requested)
                 
                 # リストアイテムを作成
@@ -230,9 +191,6 @@ class HistoryPanel(QWidget):
                 item.setSizeHint(item_widget.sizeHint())
                 self.history_list.addItem(item)
                 self.history_list.setItemWidget(item, item_widget)
-        
-        # 統計情報を更新
-        self._update_statistics()
     
     def _on_filter_changed(self, filter_text: str):
         """フィルターが変更された時"""
@@ -252,20 +210,6 @@ class HistoryPanel(QWidget):
             self.history_selected.emit(history_id, images, history_data["parameters"])
             print(f"[History] 履歴選択: ID={history_id}")
     
-    def _on_favorite_toggled(self, history_id: int):
-        """お気に入りがトグルされた時"""
-        new_state = self.history_manager.toggle_favorite(history_id)
-        print(f"[History] お気に入り変更: ID={history_id}, 状態={new_state}")
-        
-        # ウィジェットを更新（リロードせずに）
-        for i in range(self.history_list.count()):
-            item = self.history_list.item(i)
-            widget = self.history_list.itemWidget(item)
-            if isinstance(widget, HistoryItemWidget):
-                if widget.history_data["id"] == history_id:
-                    widget.update_favorite_status(new_state)
-                    break
-    
     def _on_delete_requested(self, history_id: int):
         """削除が要求された時"""
         from PySide6.QtWidgets import QMessageBox
@@ -281,18 +225,6 @@ class HistoryPanel(QWidget):
             self.history_manager.delete_history(history_id)
             self._load_history()
             print(f"[History] 履歴削除: ID={history_id}")
-    
-    def _update_statistics(self):
-        """統計情報を更新"""
-        stats = self.history_manager.get_statistics()
-        
-        stats_text = (
-            f"総生成回数: {stats['total_generations']}回 | "
-            f"総画像数: {stats['total_images']}枚 | "
-            f"お気に入り: {stats['favorite_count']}件"
-        )
-        
-        self.stats_label.setText(stats_text)
     
     def refresh(self):
         """履歴を更新"""

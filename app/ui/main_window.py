@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QGridLayout,
+    QCheckBox,
 )
 from PySide6.QtCore import Qt, Signal, QThread
 from PySide6.QtGui import QPixmap
@@ -39,7 +40,6 @@ from ui.widgets.pose_gallery import PoseGalleryWidget
 from ui.widgets.background_gallery import BackgroundGalleryWidget
 from ui.widgets.chat_refinement import ChatRefinementWidget
 from ui.widgets.history_panel import HistoryPanel
-from ui.widgets.video_generator_panel import VideoGeneratorPanel
 from ui.widgets.reference_person_widget import ReferencePersonWidget
 
 
@@ -159,7 +159,7 @@ class ChatRefinementWorker(QThread):
     refinement_completed = Signal(Image.Image, str)  # 画像, AI応答
     refinement_failed = Signal(str)
 
-    def __init__(self, chat_service, instruction, generate_service, garments, model_attrs, config, conversation_history):
+    def __init__(self, chat_service, instruction, generate_service, garments, model_attrs, config, conversation_history, base_image=None):
         super().__init__()
         self.chat_service = chat_service
         self.instruction = instruction
@@ -168,6 +168,7 @@ class ChatRefinementWorker(QThread):
         self.model_attrs = model_attrs
         self.config = config
         self.conversation_history = conversation_history
+        self.base_image = base_image  # 編集対象の画像
 
     def run(self):
         """バックグラウンドで実行"""
@@ -185,7 +186,7 @@ class ChatRefinementWorker(QThread):
             # サービスに進捗コールバックを渡す
             self.generate_service.progress_callback = progress_callback
             
-            # チャット修正を実行
+            # チャット修正を実行（選択画像を渡す）
             images, ai_response, metadata = loop.run_until_complete(
                 self.chat_service.refine_image(
                     self.instruction,
@@ -194,6 +195,7 @@ class ChatRefinementWorker(QThread):
                     self.model_attrs,
                     self.config,
                     self.conversation_history,
+                    self.base_image,  # 編集対象の画像
                     progress_callback
                 )
             )
@@ -307,7 +309,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Virtual Fashion Try-On")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(1400, 900)
+        self.resize(1600, 1000)  # 起動時のサイズを大きく
 
         # 設定とAPIキー管理
         self.config_manager = ConfigManager()
@@ -336,6 +339,9 @@ class MainWindow(QMainWindow):
         
         # 最後に生成したパラメータ（チャット修正用）
         self.last_generation_params = None
+        
+        # 選択された画像（チャット修正用）
+        self.selected_image_for_edit = None
 
         # UIを構築
         self._setup_ui()
@@ -354,7 +360,10 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
 
         # トップエリア（参考人物 + 衣類画像 + モデル属性）
-        top_layout = QHBoxLayout()
+        top_widget = QWidget()
+        top_widget.setMaximumHeight(280)  # 高さ制限
+        top_layout = QHBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
 
         # 左: 参考人物画像
         reference_person_group = self._create_reference_person_group()
@@ -368,10 +377,11 @@ class MainWindow(QMainWindow):
         model_group = self._create_model_attributes_group()
         top_layout.addWidget(model_group, stretch=2)
 
-        main_layout.addLayout(top_layout)
+        main_layout.addWidget(top_widget)
 
         # 中段: 生成設定
         settings_group = self._create_generation_settings_group()
+        settings_group.setMaximumHeight(120)  # 高さ制限
         main_layout.addWidget(settings_group)
 
         # 進捗バー
@@ -379,7 +389,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p%")
-        self.progress_bar.setMinimumHeight(30)
+        self.progress_bar.setFixedHeight(25)  # 固定高さ
         self.progress_bar.setStyleSheet("""
             QProgressBar {
                 border: 2px solid #3498db;
@@ -396,26 +406,25 @@ class MainWindow(QMainWindow):
         """)
         main_layout.addWidget(self.progress_bar)
 
-        # 下段: 履歴 + 結果ギャラリー + チャット + 動画生成（4カラム）
+        # 下段: 履歴 + 結果ギャラリー + チャット（3カラム） - 拡大
         bottom_layout = QHBoxLayout()
         
         # 左: 履歴パネル
         history_group = self._create_history_group()
+        history_group.setMinimumHeight(500)  # 最小高さ
         bottom_layout.addWidget(history_group, stretch=1)
         
-        # 中央左: 結果ギャラリー
+        # 中央: 結果ギャラリー
         gallery_group = self._create_gallery_group()
+        gallery_group.setMinimumHeight(500)  # 最小高さ
         bottom_layout.addWidget(gallery_group, stretch=2)
         
-        # 中央右: チャット修正パネル
+        # 右: チャット修正パネル
         chat_group = self._create_chat_group()
+        chat_group.setMinimumHeight(500)  # 最小高さ
         bottom_layout.addWidget(chat_group, stretch=1)
         
-        # 右: 動画生成パネル
-        video_group = self._create_video_group()
-        bottom_layout.addWidget(video_group, stretch=1)
-        
-        main_layout.addLayout(bottom_layout)
+        main_layout.addLayout(bottom_layout, stretch=10)  # 大きくstretch
 
     def _create_reference_person_group(self) -> QGroupBox:
         """参考人物グループを作成"""
@@ -578,7 +587,16 @@ class MainWindow(QMainWindow):
         self.num_outputs_spin = QSpinBox()
         self.num_outputs_spin.setRange(1, 4)
         self.num_outputs_spin.setValue(1)
+        self.num_outputs_spin.valueChanged.connect(self._on_num_outputs_changed)
         row1_layout.addWidget(self.num_outputs_spin)
+        
+        row1_layout.addSpacing(10)
+        
+        # 動画生成チェックボックス
+        self.auto_video_checkbox = QCheckBox("動画を生成する ※生成枚数が2枚以上の時のみ選択可")
+        self.auto_video_checkbox.setEnabled(False)  # デフォルトは無効（枚数1のため）
+        self.auto_video_checkbox.setStyleSheet("color: #e74c3c; font-weight: bold;")
+        row1_layout.addWidget(self.auto_video_checkbox)
         
         row1_layout.addStretch()
         layout.addLayout(row1_layout)
@@ -605,25 +623,27 @@ class MainWindow(QMainWindow):
         layout.addLayout(row2_layout)
         
         # 角度モード説明ラベル
-        self.angle_mode_label = QLabel("💡 角度違いモード: 同じモデル・衣類で異なる角度から撮影した画像を生成します")
+        self.angle_mode_label = QLabel("角度違いモード: 同じモデル・衣類で異なる角度から撮影した画像を生成します")
         self.angle_mode_label.setStyleSheet("color: #3498db; font-size: 9pt; padding: 5px;")
         self.angle_mode_label.setVisible(False)
         layout.addWidget(self.angle_mode_label)
         
         # 第3行: 生成ボタン
         row3_layout = QHBoxLayout()
+        row3_layout.setContentsMargins(0, 5, 0, 5)  # 上下にマージン追加
         row3_layout.addStretch()
         
         self.generate_btn = QPushButton("生成開始")
-        self.generate_btn.setMinimumHeight(40)
+        self.generate_btn.setFixedHeight(36)
+        self.generate_btn.setMinimumWidth(120)
         self.generate_btn.setStyleSheet("""
             QPushButton {
                 background-color: #2ecc71;
                 color: white;
                 font-weight: bold;
-                font-size: 12pt;
+                font-size: 11pt;
                 border-radius: 5px;
-                padding: 8px 20px;
+                padding: 6px 16px;
             }
             QPushButton:hover {
                 background-color: #27ae60;
@@ -638,7 +658,11 @@ class MainWindow(QMainWindow):
         row3_layout.addStretch()
         layout.addLayout(row3_layout)
         
+        # レイアウトのマージンを調整
+        layout.setContentsMargins(10, 5, 10, 5)
+        layout.setSpacing(5)
         group.setLayout(layout)
+        group.setMaximumHeight(150)  # 最大高さを制限して枠内に収める
         return group
     
     def _on_mode_changed(self, mode: Optional[str]):
@@ -647,16 +671,35 @@ class MainWindow(QMainWindow):
             self.generation_mode = mode
             self.angle_mode_label.setVisible(mode == "angle")
             print(f"[INFO] 生成モード変更: {mode}")
+    
+    def _on_num_outputs_changed(self, value: int):
+        """出力枚数が変更された時の処理"""
+        # 枚数が2以上の場合のみ動画生成チェックボックスを有効化
+        self.auto_video_checkbox.setEnabled(value >= 2)
+        if value < 2:
+            self.auto_video_checkbox.setChecked(False)
+        print(f"[INFO] 出力枚数変更: {value}, 動画チェック有効: {value >= 2}")
 
     def _create_gallery_group(self) -> QGroupBox:
         """結果ギャラリーグループを作成"""
+        from PySide6.QtWidgets import QScrollArea
+        
         group = QGroupBox("生成結果")
         layout = QVBoxLayout()
 
+        # スクロールエリアを作成
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        
         # ギャラリービュー
         self.gallery_view = GalleryView()
         self.gallery_view.image_selected.connect(self._on_gallery_image_selected)
-        layout.addWidget(self.gallery_view)
+        
+        # スクロールエリアにギャラリービューを設定
+        scroll_area.setWidget(self.gallery_view)
+        layout.addWidget(scroll_area)
 
         # ボタン
         btn_layout = QHBoxLayout()
@@ -700,18 +743,6 @@ class MainWindow(QMainWindow):
         group.setLayout(layout)
         return group
     
-    def _create_video_group(self) -> QGroupBox:
-        """動画生成グループを作成"""
-        group = QGroupBox("動画生成")
-        layout = QVBoxLayout()
-        
-        # 動画生成パネル
-        self.video_panel = VideoGeneratorPanel()
-        self.video_panel.video_generation_requested.connect(self._on_video_generation_requested)
-        layout.addWidget(self.video_panel)
-        
-        group.setLayout(layout)
-        return group
     
     def _on_history_selected(self, history_id: int, images: List[Image.Image], parameters: Dict):
         """履歴が選択された時"""
@@ -723,14 +754,46 @@ class MainWindow(QMainWindow):
     
     def _on_gallery_image_selected(self, image: Image.Image, index: int):
         """ギャラリーで画像が選択された時"""
-        if self.last_generation_params:
-            # チャットウィジェットに画像とパラメータを設定
-            self.chat_widget.set_current_image(image, self.last_generation_params)
-            print(f"[INFO] 画像 {index+1} がチャット修正用に選択されました")
+        print(f"\n[MainWindow] ギャラリーで画像 {index+1} が選択されました")
         
-        # 動画生成パネルにも画像を設定
-        self.video_panel.set_current_image(image)
-        print(f"[INFO] 画像 {index+1} が動画生成用に選択されました")
+        # 選択された画像を保存
+        self.selected_image_for_edit = image
+        
+        # パラメータを取得（なければ現在のUIから作成）
+        if self.last_generation_params:
+            params_with_image = self.last_generation_params.copy()
+            print(f"[MainWindow] 保存済みパラメータを使用")
+        else:
+            # 現在のUIからパラメータを生成
+            pose_id, pose_description, _ = self.selected_pose_info
+            bg_id, bg_description, _ = self.selected_background_info
+            
+            params_with_image = {
+                "garments": self.garments,
+                "model_attrs": {
+                    "gender": self.gender_combo.currentText(),
+                    "age_range": self.age_combo.currentText(),
+                    "ethnicity": self.ethnicity_combo.currentText(),
+                    "body_type": self.body_type_combo.currentText(),
+                    "pose": pose_id,
+                    "background": bg_id,
+                    "pose_description": pose_description,
+                    "background_description": bg_description
+                },
+                "config": {
+                    "size": self.size_combo.currentText(),
+                    "num_outputs": 1
+                }
+            }
+            print(f"[MainWindow] 現在のUIからパラメータを生成")
+        
+        # 選択画像をパラメータに追加
+        params_with_image['selected_image'] = image
+        
+        print(f"[MainWindow] チャットウィジェットに画像を設定します")
+        print(f"[MainWindow] params_with_image keys: {params_with_image.keys()}")
+        self.chat_widget.set_current_image(image, params_with_image)
+        print(f"[MainWindow] 画像 {index+1} がチャット修正用に選択されました")
     
     def _on_refinement_requested(self, instruction: str, context: Dict):
         """チャットで修正が要求された時"""
@@ -741,6 +804,9 @@ class MainWindow(QMainWindow):
     
     def _start_chat_refinement(self, instruction: str, context: Dict):
         """チャット修正を開始"""
+        print(f"\n[Chat Refinement] 修正開始: {instruction}")
+        print(f"[Chat Refinement] context keys: {context.keys()}")
+        
         from core.pipeline.chat_refinement_service import ChatRefinementService
         
         # Gemini APIキーを取得
@@ -754,8 +820,17 @@ class MainWindow(QMainWindow):
         
         # パラメータを復元
         params = context.get("params", {})
+        print(f"[Chat Refinement] params keys: {params.keys() if params else 'None'}")
+        print(f"[Chat Refinement] params: {params}")
+        
         if not params:
             self.chat_widget.on_refinement_failed("パラメータが見つかりません")
+            return
+        
+        # model_attrsがあるか確認
+        if "model_attrs" not in params:
+            print(f"[Chat Refinement] WARNING: model_attrs が params に存在しません")
+            self.chat_widget.on_refinement_failed("モデル属性が見つかりません")
             return
         
         # ModelAttributesを再構築
@@ -802,6 +877,9 @@ class MainWindow(QMainWindow):
         # 会話履歴を取得
         conversation_history = context.get("history", [])
         
+        # 選択された画像を取得
+        selected_image = params.get("selected_image", None)
+        
         # ワーカースレッドで実行
         self.chat_worker = ChatRefinementWorker(
             chat_service,
@@ -810,7 +888,8 @@ class MainWindow(QMainWindow):
             params.get("garments", self.garments),
             model_attrs,
             config,
-            conversation_history
+            conversation_history,
+            selected_image  # 選択画像を渡す
         )
         self.chat_worker.progress_updated.connect(self._update_progress)
         self.chat_worker.refinement_completed.connect(self._on_chat_refinement_completed)
@@ -833,6 +912,41 @@ class MainWindow(QMainWindow):
         current_images = self.gallery_view.get_images()
         current_images.append(new_image)
         self.gallery_view.set_images(current_images, {})
+        
+        # 履歴に保存（チャット修正画像）
+        try:
+            chat_params = {
+                "garments": [],
+                "model_attrs": {
+                    "gender": "女性",
+                    "age_range": "20代",
+                    "ethnicity": "アジア",
+                    "body_type": "標準",
+                    "pose": "front",
+                    "background": "white",
+                },
+                "config": {
+                    "size": "1024x1024",
+                    "num_outputs": 1
+                },
+                "chat_refinement": True,
+                "ai_response": ai_response
+            }
+            
+            history_id = self.history_manager.save_generation(
+                images=[new_image],
+                parameters=chat_params,
+                generation_mode="chat_refinement",
+                tags=["チャット修正"],
+                notes=ai_response[:100] if ai_response else ""
+            )
+            
+            # 履歴パネルを更新
+            self.history_panel.refresh()
+            
+            print(f"[History] チャット修正画像を履歴に保存: ID={history_id}")
+        except Exception as e:
+            print(f"[History] チャット修正画像の保存エラー: {e}")
         
         self.statusBar().showMessage("修正画像を生成しました", 3000)
     
@@ -877,29 +991,29 @@ class MainWindow(QMainWindow):
         self.video_worker.video_generated.connect(self._on_video_generated)
         self.video_worker.video_generation_failed.connect(self._on_video_generation_failed)
         
-        # 進捗バーを表示
+        # 進捗バーを表示（動画生成中の文言を設定）
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("動画生成中... %p%")
+        self.statusBar().showMessage("動画を生成しています...", 0)
         
         self.video_worker.start()
     
     def _on_video_generated(self, video_path: str, metadata: Dict):
         """動画生成完了時の処理"""
         self.progress_bar.setVisible(False)
+        self.progress_bar.setFormat("%p%")  # フォーマットを元に戻す
         
-        # 動画パネルに通知
-        self.video_panel.on_video_generated(video_path)
+        # ギャラリーに動画プレビューを設定
+        self.gallery_view.set_video(video_path)
         
-        self.statusBar().showMessage(f"動画を生成しました: {Path(video_path).name}", 5000)
+        self.statusBar().showMessage("動画を生成しました！生成結果欄で再生・保存できます。", 5000)
         
         print(f"[Video] 動画生成完了: {video_path}")
     
     def _on_video_generation_failed(self, error_message: str):
         """動画生成失敗時の処理"""
         self.progress_bar.setVisible(False)
-        
-        # 動画パネルに通知
-        self.video_panel.on_video_generation_failed(error_message)
         
         QMessageBox.critical(self, "エラー", f"動画生成に失敗しました:\n{error_message}")
         
@@ -1031,11 +1145,17 @@ class MainWindow(QMainWindow):
         )
 
         # 生成設定（Gemini固定）
+        # 動画チェックボックスがONの場合、画像は1枚減らす（残り1枚は動画用）
+        num_images = self.num_outputs_spin.value()
+        if self.auto_video_checkbox.isChecked():
+            num_images = num_images - 1  # 動画1枚分を差し引く
+            print(f"[MainWindow] 動画生成ON: 画像{num_images}枚 + 動画1本を生成します")
+        
         config = GenerationConfig(
             provider="gemini",
             quality="standard",
             size=self.size_combo.currentText(),
-            num_outputs=self.num_outputs_spin.value(),
+            num_outputs=max(1, num_images),  # 最低1枚は生成
         )
 
         # 参考人物がある場合はFASHN Virtual Try-Onを使用、ない場合はGemini
@@ -1055,6 +1175,13 @@ class MainWindow(QMainWindow):
                     "設定 → APIキー設定から「gemini」のAPIキーを追加してください。"
                 )
                 return
+            
+            # カスタム背景画像を設定（あれば）
+            if bg_image and Path(bg_image).exists():
+                adapter.set_custom_background(bg_image)
+                print(f"[MainWindow] カスタム背景画像を設定: {bg_image}")
+            else:
+                adapter.set_custom_background(None)
 
         # 参考人物モードの場合は特別処理
         if adapter == "fashn_tryon":
@@ -1205,6 +1332,26 @@ class MainWindow(QMainWindow):
 
         # ギャラリーに表示
         self.gallery_view.set_images(images, metadata)
+        
+        # 動画生成チェックボックスがONの場合
+        if self.auto_video_checkbox.isChecked() and len(images) >= 1:
+            print(f"[Auto Video] 1枚目の画像から自動的に動画を生成します")
+            self.statusBar().showMessage("1枚目の画像から動画を生成中...", 0)
+            
+            # 1枚目の画像を取得
+            first_image = images[0]
+            
+            # 自動的に動画生成を開始（10秒、1080p固定）
+            default_settings = {
+                "duration": 10,  # 10秒固定
+                "resolution": "1080p",  # 1080p固定
+                "prompt": "fashion model rotating 360 degrees and striking elegant poses from different angles, turning left and right, showing front, side and back views, professional runway modeling, smooth transitions between poses"
+            }
+            
+            # 少し待ってから動画生成を開始（UI更新のため）
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(1000, lambda: self._on_video_generation_requested(first_image, default_settings))
+            print(f"[Auto Video] 動画生成をスケジュールしました")
         
         # 最後の生成パラメータを保存（チャット修正用）
         pose_id, pose_description, _ = self.selected_pose_info
@@ -1539,42 +1686,27 @@ Powered by:
         QMessageBox.about(self, "バージョン情報", about_text)
     
     def _check_api_keys(self):
-        """APIキーの確認（Gemini自動設定機能付き）"""
+        """APIキーの確認"""
         # Gemini APIキーが設定されているか確認
         gemini_key = self.api_key_manager.load_api_key("gemini")
         
         if not gemini_key:
-            # Gemini APIキーが未設定の場合、自動設定を試みる
-            default_api_key = "AIzaSyDLQVe0L5jn6R7lJNV4coe5FY-ICRHtSIg"
-            
+            # Gemini APIキーが未設定の場合、設定を促す
             reply = QMessageBox.question(
                 self,
-                "Gemini APIキー自動設定",
+                "Gemini APIキー設定",
                 "Gemini APIキーが設定されていません。\n"
-                "デフォルトのAPIキーを自動設定しますか？\n\n"
-                "※後で設定メニューから変更できます。",
+                "画像生成にはGemini APIキーが必要です。\n\n"
+                "今すぐAPIキーを設定しますか？\n\n"
+                "※Google AI Studioで無料でAPIキーを取得できます。\n"
+                "https://aistudio.google.com/app/apikey",
                 QMessageBox.Yes | QMessageBox.No,
             )
             
             if reply == QMessageBox.Yes:
-                try:
-                    self.api_key_manager.save_api_key("gemini", default_api_key)
-                    QMessageBox.information(
-                        self,
-                        "設定完了",
-                        "Gemini APIキーが自動設定されました。\n"
-                        "すぐに画像生成を開始できます！"
-                    )
-                except Exception as e:
-                    QMessageBox.critical(
-                        self,
-                        "エラー",
-                        f"APIキーの保存に失敗しました:\n{str(e)}"
-                    )
-            else:
-                # 手動設定ダイアログを開く
+                # 設定ダイアログを開く
                 self._open_api_key_dialog()
-        # APIキーが設定済みの場合は何もしない（情報ダイアログは非表示）
+        # APIキーが設定済みの場合は何もしない
 
     def _show_info_dialog(self):
         """情報ダイアログを表示"""

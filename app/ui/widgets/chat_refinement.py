@@ -96,12 +96,7 @@ class ChatRefinementWidget(QWidget):
         """UIをセットアップ"""
         layout = QVBoxLayout(self)
         
-        # タイトル
-        title_label = QLabel("💬 チャットで画像を修正")
-        title_label.setStyleSheet("font-weight: bold; font-size: 14pt; padding: 10px;")
-        layout.addWidget(title_label)
-        
-        # 使い方の説明
+        # 使い方の説明（タイトルは削除）
         help_text = QLabel(
             "生成された画像に対して、自然な言葉で修正指示を出してください。\n"
             "例: 「もっと明るくして」「背景を青空に変更」「笑顔にして」"
@@ -131,14 +126,14 @@ class ChatRefinementWidget(QWidget):
         self.input_field.returnPressed.connect(self._send_message)
         input_layout.addWidget(self.input_field)
         
-        self.send_btn = QPushButton("送信")
-        self.send_btn.setMinimumSize(80, 40)
-        self.send_btn.setStyleSheet("""
+        # 統一デザインの送信ボタンスタイル
+        BUTTON_STYLE = """
             QPushButton {
                 background-color: #3498db;
                 color: white;
                 font-weight: bold;
                 border-radius: 5px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
                 background-color: #2980b9;
@@ -146,7 +141,11 @@ class ChatRefinementWidget(QWidget):
             QPushButton:disabled {
                 background-color: #95a5a6;
             }
-        """)
+        """
+        
+        self.send_btn = QPushButton("送信")
+        self.send_btn.setMinimumSize(80, 40)
+        self.send_btn.setStyleSheet(BUTTON_STYLE)
         self.send_btn.clicked.connect(self._send_message)
         input_layout.addWidget(self.send_btn)
         
@@ -160,18 +159,27 @@ class ChatRefinementWidget(QWidget):
         self.current_image = image
         self.original_params = params
         self.conversation_history = []
+        
+        print(f"[Chat Widget] 画像とパラメータを設定")
+        print(f"[Chat Widget] チャットを有効化します")
+        
+        # チャットを有効化
         self.setEnabled(True)
+        self.input_field.setEnabled(True)
+        self.send_btn.setEnabled(True)
         
         # チャット履歴をクリア
         self._clear_chat()
         
         # AI初期メッセージを追加
         self._add_ai_message(
-            "画像が生成されました！\n"
+            "画像が選択されました！\n"
             "修正したい箇所があれば、自然な言葉で教えてください。\n"
             "例：「もっと明るく」「背景を変更」「笑顔にして」",
             image=image
         )
+        
+        print(f"[Chat Widget] チャット準備完了")
     
     def _send_message(self):
         """メッセージを送信"""

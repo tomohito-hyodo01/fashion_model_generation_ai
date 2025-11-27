@@ -4,13 +4,14 @@ from PySide6.QtWidgets import (
     QWidget,
     QGridLayout,
     QPushButton,
+    QToolButton,
     QLabel,
     QVBoxLayout,
     QSizePolicy,
     QFileDialog,
     QButtonGroup,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QPixmap, QIcon
 from pathlib import Path
 from typing import Dict, Optional
@@ -47,49 +48,49 @@ class PoseGalleryWidget(QWidget):
                 "name": "正面",
                 "image": str(base_path / "front.png"),
                 "description": "standing straight, facing camera, arms at sides, full body visible from head to feet",
-                "emoji": "🧍"
+                "emoji": ""
             },
             "side": {
                 "name": "側面",
                 "image": str(base_path / "side.png"),
                 "description": "standing in profile view, side pose, full body visible",
-                "emoji": "🚶"
+                "emoji": ""
             },
             "walking": {
                 "name": "歩行",
                 "image": str(base_path / "walking.png"),
                 "description": "walking naturally with one leg forward in motion, dynamic pose",
-                "emoji": "🏃"
+                "emoji": ""
             },
             "sitting": {
                 "name": "座位",
                 "image": str(base_path / "sitting.png"),
                 "description": "sitting on a chair or bench with legs positioned naturally, full body visible including feet",
-                "emoji": "🪑"
+                "emoji": ""
             },
             "arms_crossed": {
                 "name": "腕組み",
                 "image": str(base_path / "arms_crossed.png"),
                 "description": "standing with arms crossed, confident pose",
-                "emoji": "💪"
+                "emoji": ""
             },
             "hands_on_hips": {
                 "name": "腰に手",
                 "image": str(base_path / "hands_on_hips.png"),
                 "description": "standing with hands on hips, assertive pose",
-                "emoji": "🙆"
+                "emoji": ""
             },
             "casual": {
                 "name": "カジュアル",
                 "image": str(base_path / "casual.png"),
                 "description": "relaxed casual pose, one hand in pocket",
-                "emoji": "😎"
+                "emoji": ""
             },
             "professional": {
                 "name": "フォーマル",
                 "image": str(base_path / "professional.png"),
                 "description": "professional formal pose, standing upright",
-                "emoji": "💼"
+                "emoji": ""
             }
         }
     
@@ -105,7 +106,7 @@ class PoseGalleryWidget(QWidget):
         
         # ギャラリーグリッド
         grid_layout = QGridLayout()
-        grid_layout.setSpacing(10)
+        grid_layout.setSpacing(5)  # 隙間を狭める
         
         # プリセットポーズボタンを配置（4列）
         for i, (pose_id, pose_info) in enumerate(self.pose_presets.items()):
@@ -125,67 +126,63 @@ class PoseGalleryWidget(QWidget):
         
         layout.addLayout(grid_layout)
         
-        # カスタムポーズアップロードボタン
-        custom_btn = QPushButton("📁 カスタムポーズ画像をアップロード")
-        custom_btn.setStyleSheet("""
+        # 統一デザインのボタンスタイル
+        BUTTON_STYLE = """
             QPushButton {
-                padding: 8px;
                 background-color: #3498db;
                 color: white;
-                border: none;
-                border-radius: 4px;
                 font-weight: bold;
+                border-radius: 5px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
                 background-color: #2980b9;
             }
-        """)
+        """
+        
+        # カスタムポーズアップロードボタン
+        custom_btn = QPushButton("カスタムポーズ画像をアップロード")
+        custom_btn.setStyleSheet(BUTTON_STYLE)
         custom_btn.clicked.connect(self._upload_custom_pose)
         layout.addWidget(custom_btn)
         
         layout.addStretch()
     
-    def _create_pose_button(self, pose_id: str, pose_info: Dict[str, str]) -> QPushButton:
-        """ポーズボタンを作成"""
-        btn = QPushButton()
+    def _create_pose_button(self, pose_id: str, pose_info: Dict[str, str]) -> QToolButton:
+        """ポーズボタンを作成（画像の下にテキスト表示）"""
+        btn = QToolButton()
         btn.setCheckable(True)
+        btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)  # アイコンの下にテキスト
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        btn.setMinimumSize(120, 140)
-        btn.setMaximumSize(150, 180)
+        btn.setMinimumSize(110, 130)
+        btn.setMaximumSize(140, 160)
         
         # ボタンの内容を設定
         image_path = pose_info["image"]
         name = pose_info["name"]
-        emoji = pose_info.get("emoji", "")
         
         # 画像が存在するか確認
         if Path(image_path).exists():
-            # 画像をアイコンとして設定
             btn.setIcon(QIcon(image_path))
-            btn.setIconSize(btn.size() * 0.7)
-            btn.setText(name)
-        else:
-            # 画像がない場合は絵文字+テキスト
-            btn.setText(f"{emoji}\n{name}")
-            btn.setStyleSheet("""
-                QPushButton {
-                    font-size: 14pt;
-                    padding: 10px;
-                }
-            """)
+            btn.setIconSize(QSize(90, 90))
+        
+        # テキスト設定
+        btn.setText(name)
         
         # スタイル設定
-        btn.setStyleSheet(btn.styleSheet() + """
-            QPushButton {
+        btn.setStyleSheet("""
+            QToolButton {
                 border: 2px solid #ddd;
                 border-radius: 8px;
                 background-color: white;
+                font-size: 9pt;
+                padding: 5px;
             }
-            QPushButton:hover {
+            QToolButton:hover {
                 border-color: #3498db;
                 background-color: #f0f8ff;
             }
-            QPushButton:checked {
+            QToolButton:checked {
                 border-color: #2ecc71;
                 border-width: 3px;
                 background-color: #e8f8f5;

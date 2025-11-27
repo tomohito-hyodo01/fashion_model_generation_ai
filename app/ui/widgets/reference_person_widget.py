@@ -36,15 +36,14 @@ class ReferencePersonWidget(QWidget):
         layout = QVBoxLayout(self)
         
         # タイトル
-        title_label = QLabel("👤 参考人物画像")
+        title_label = QLabel("参考人物画像")
         title_label.setStyleSheet("font-weight: bold; font-size: 12pt; padding: 5px;")
         layout.addWidget(title_label)
         
         # 説明
         info_label = QLabel(
             "人物の画像を指定すると、その人物に服を着せた画像を生成します。\n"
-            "指定しない場合は、新しいモデルが生成されます。\n\n"
-            "📌 参考人物を指定した場合、モデル属性（性別・年代等）は無視されます。"
+            "指定しない場合は、新しいモデルが生成されます。"
         )
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: #666; font-size: 9pt; padding: 5px;")
@@ -67,65 +66,37 @@ class ReferencePersonWidget(QWidget):
         # ボタン
         btn_layout = QHBoxLayout()
         
-        # アップロードボタン
-        self.upload_btn = QPushButton("📁 人物画像を選択")
-        self.upload_btn.setStyleSheet("""
+        # 統一デザインのボタンスタイル
+        BUTTON_STYLE = """
             QPushButton {
-                background-color: #9b59b6;
+                background-color: #3498db;
                 color: white;
-                padding: 8px;
-                border-radius: 4px;
                 font-weight: bold;
+                border-radius: 5px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
-                background-color: #8e44ad;
+                background-color: #2980b9;
             }
-        """)
+            QPushButton:disabled {
+                background-color: #95a5a6;
+            }
+        """
+        
+        # アップロードボタン
+        self.upload_btn = QPushButton("人物画像を選択")
+        self.upload_btn.setStyleSheet(BUTTON_STYLE)
         self.upload_btn.clicked.connect(self._upload_person_image)
         btn_layout.addWidget(self.upload_btn)
         
         # クリアボタン
-        self.clear_btn = QPushButton("✕ クリア")
+        self.clear_btn = QPushButton("クリア")
         self.clear_btn.setEnabled(False)
-        self.clear_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #95a5a6;
-                color: white;
-                padding: 8px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #7f8c8d;
-            }
-            QPushButton:disabled {
-                background-color: #ecf0f1;
-                color: #bdc3c7;
-            }
-        """)
+        self.clear_btn.setStyleSheet(BUTTON_STYLE)
         self.clear_btn.clicked.connect(self._clear_person_image)
         btn_layout.addWidget(self.clear_btn)
         
         layout.addLayout(btn_layout)
-        
-        # 注意事項
-        note_label = QLabel(
-            "💡 ヒント:\n"
-            "・全身が写っている画像が最適です\n"
-            "・顔がはっきり見える画像を使用\n"
-            "・背景がシンプルな画像を推奨"
-        )
-        note_label.setWordWrap(True)
-        note_label.setStyleSheet("""
-            QLabel {
-                background-color: #fffacd;
-                border: 1px solid #f0e68c;
-                border-radius: 4px;
-                padding: 8px;
-                font-size: 8pt;
-                color: #666;
-            }
-        """)
-        layout.addWidget(note_label)
         
         layout.addStretch()
     

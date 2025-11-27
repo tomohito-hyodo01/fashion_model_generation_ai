@@ -19,7 +19,7 @@ from core.adapters.provider_base import ProviderBase
 
 
 class GeminiImagenAdapter(ProviderBase):
-    """Google Generative AI - Gemini 2.0 Flash Image Generation アダプタ"""
+    """Google Generative AI - Gemini 3 Pro Image Generation アダプタ"""
 
     def __init__(self, api_key: str):
         """
@@ -31,14 +31,17 @@ class GeminiImagenAdapter(ProviderBase):
         # APIキーの設定
         genai.configure(api_key=api_key)
         
-        # Gemini 2.5 Flash Image（画像入力対応）
-        self.model_name = "gemini-2.5-flash-image"
+        # Gemini 3 Pro Image（最新の画像生成モデル）
+        self.model_name = "gemini-3-pro-image-preview"
         
         # 進捗コールバック
         self.progress_callback = None
         
         # 参考人物画像（オプション）
         self.reference_person_image: Optional[str] = None
+        
+        # カスタム背景画像（オプション）
+        self.custom_background_image: Optional[str] = None
     
     def set_reference_person(self, image_path: Optional[str]):
         """参考人物画像を設定
@@ -52,6 +55,18 @@ class GeminiImagenAdapter(ProviderBase):
             print(f"[Gemini Adapter] フルパス: {image_path}")
         else:
             print("[Gemini Adapter] 参考人物画像をクリア")
+    
+    def set_custom_background(self, image_path: Optional[str]):
+        """カスタム背景画像を設定
+        
+        Args:
+            image_path: 背景画像のパス（Noneの場合はクリア）
+        """
+        self.custom_background_image = image_path
+        if image_path:
+            print(f"[Gemini Adapter] ★カスタム背景画像を設定★: {Path(image_path).name}")
+        else:
+            print("[Gemini Adapter] カスタム背景画像をクリア")
     
     def set_progress_callback(self, callback):
         """進捗コールバック関数を設定"""
@@ -101,7 +116,7 @@ class GeminiImagenAdapter(ProviderBase):
         reference_person_image: Optional[str] = None,
     ) -> Tuple[List[Image.Image], Dict[str, Any]]:
         """
-        画像生成（Gemini 2.5 Flash Image - Virtual Try-On）
+        画像生成（Gemini 3 Pro Image - Virtual Try-On）
 
         Args:
             garments: 衣類アイテムのリスト
@@ -124,7 +139,7 @@ class GeminiImagenAdapter(ProviderBase):
             if self.progress_callback:
                 self.progress_callback("Geminiモデルを初期化しています...", 30)
             
-            model = genai.GenerativeModel(model_name="gemini-2.5-flash-image")
+            model = genai.GenerativeModel(model_name="gemini-3-pro-image-preview")
             
             generated_images = []
             
@@ -247,6 +262,24 @@ class GeminiImagenAdapter(ProviderBase):
                     except Exception as e:
                         print(f"  Warning: Could not load garment image {garment.image_path}: {e}")
                 
+                # カスタム背景画像を追加
+                has_custom_background = False
+                if self.custom_background_image:
+                    try:
+                        bg_img = Image.open(self.custom_background_image)
+                        # 画像サイズを制限
+                        max_size = 1024
+                        if max(bg_img.size) > max_size:
+                            ratio = max_size / max(bg_img.size)
+                            new_size = tuple(int(dim * ratio) for dim in bg_img.size)
+                            bg_img = bg_img.resize(new_size, Image.Resampling.LANCZOS)
+                        bg_img = bg_img.convert('RGB')
+                        prompt_parts.append(bg_img)
+                        has_custom_background = True
+                        print(f"  ★ Added custom background image: {Path(self.custom_background_image).name} ★")
+                    except Exception as e:
+                        print(f"  Warning: Could not load custom background image: {e}")
+                
                 # 進捗報告: プロンプト構築
                 prompt_progress = current_progress + int(step_size * 0.2 / num_outputs)
                 if self.progress_callback:
@@ -278,15 +311,23 @@ class GeminiImagenAdapter(ProviderBase):
                     )
                 else:
                     # 参考人物がいない場合: 新しいモデルを生成（従来通り）
+                    # カスタム背景画像がある場合の背景指示
+                    if has_custom_background:
+                        bg_instruction = f"Use the LAST image as the background. Place the model in front of this exact background scene."
+                        image_count = garment_count + 1
+                    else:
+                        bg_instruction = f"BACKGROUND: {bg_desc}."
+                        image_count = garment_count
+                    
                     prompt_text = (
                         f"CRITICAL INSTRUCTIONS:\n"
-                        f"1. Look at the {garment_count} reference image(s) above showing clothing items.\n"
+                        f"1. Look at the {garment_count} clothing reference image(s) above.\n"
                         f"2. Create a photograph of a {model_attrs.age_range} {model_attrs.ethnicity} {model_attrs.gender} fashion model.\n"
                         f"3. The model MUST wear the EXACT SAME clothing items from the reference images.\n"
                         f"4. PRESERVE ALL DETAILS: exact colors (RGB values), patterns, textures, logos, text, prints, buttons, zippers.\n"
                         f"5. DO NOT change, modify, or redesign the clothing. Copy it exactly as shown.\n"
                         f"6. POSE: The model is {pose_desc}.\n"
-                        f"7. BACKGROUND: {bg_desc}.\n"
+                        f"7. {bg_instruction}\n"
                         f"8. FRAMING: Full body shot showing the model from head to toe.\n"
                         f"9. LIGHTING: Professional studio lighting, even and natural.\n"
                         f"10. STYLE: Photorealistic, high-resolution professional fashion photography.\n"
@@ -305,7 +346,7 @@ class GeminiImagenAdapter(ProviderBase):
                     self.progress_callback(f"Gemini APIに送信中 ({i+1}/{num_outputs})...", send_progress)
                 
                 # Geminiに画像とプロンプトを送信
-                print(f"  Sending request to Gemini 2.5 Flash Image...")
+                print(f"  Sending request to Gemini 3 Pro Image...")
                 response = model.generate_content(prompt_parts)
                 
                 # 進捗報告: レスポンス処理
@@ -371,7 +412,7 @@ class GeminiImagenAdapter(ProviderBase):
         """
         生成コストの見積もり
 
-        Gemini 2.0 Flash Image Generationの価格:
+        Gemini 3 Pro Image Generationの価格:
         - 無料ティア: 一定制限内は無料
         - 有料: 詳細は要確認
         """

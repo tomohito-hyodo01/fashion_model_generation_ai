@@ -4,13 +4,15 @@ from PySide6.QtWidgets import (
     QWidget,
     QGridLayout,
     QPushButton,
+    QToolButton,
     QLabel,
     QVBoxLayout,
+    QHBoxLayout,
     QSizePolicy,
     QFileDialog,
     QButtonGroup,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QPixmap, QIcon, QColor, QPainter
 from pathlib import Path
 from typing import Dict, Optional
@@ -48,56 +50,56 @@ class BackgroundGalleryWidget(QWidget):
                 "image": str(base_path / "white.png"),
                 "description": "plain solid white background, studio setting",
                 "color": "#FFFFFF",
-                "emoji": "⬜"
+                "emoji": ""
             },
             "gray": {
                 "name": "グレー",
                 "image": str(base_path / "gray.png"),
                 "description": "neutral gray background, professional look",
                 "color": "#808080",
-                "emoji": "⬛"
+                "emoji": ""
             },
             "studio": {
                 "name": "スタジオ",
                 "image": str(base_path / "studio.png"),
                 "description": "professional photo studio background with soft lighting",
                 "color": "#E0E0E0",
-                "emoji": "📸"
+                "emoji": ""
             },
             "city": {
                 "name": "街",
                 "image": str(base_path / "city.png"),
                 "description": "modern city street background, urban setting",
                 "color": "#4A90E2",
-                "emoji": "🏙️"
+                "emoji": ""
             },
             "nature": {
                 "name": "自然",
                 "image": str(base_path / "nature.png"),
                 "description": "natural outdoor setting with trees and greenery",
                 "color": "#7CB342",
-                "emoji": "🌳"
+                "emoji": ""
             },
             "beach": {
                 "name": "ビーチ",
                 "image": str(base_path / "beach.png"),
                 "description": "beach background with sand and ocean",
                 "color": "#FFD54F",
-                "emoji": "🏖️"
+                "emoji": ""
             },
             "indoor": {
                 "name": "室内",
                 "image": str(base_path / "indoor.png"),
                 "description": "indoor interior background, modern room",
                 "color": "#BCAAA4",
-                "emoji": "🏠"
+                "emoji": ""
             },
             "abstract": {
                 "name": "抽象",
                 "image": str(base_path / "abstract.png"),
                 "description": "abstract artistic background with soft colors",
                 "color": "#CE93D8",
-                "emoji": "🎨"
+                "emoji": ""
             }
         }
     
@@ -113,7 +115,7 @@ class BackgroundGalleryWidget(QWidget):
         
         # ギャラリーグリッド
         grid_layout = QGridLayout()
-        grid_layout.setSpacing(10)
+        grid_layout.setSpacing(5)  # 隙間を狭める
         
         # プリセット背景ボタンを配置（4列）
         for i, (bg_id, bg_info) in enumerate(self.background_presets.items()):
@@ -133,72 +135,104 @@ class BackgroundGalleryWidget(QWidget):
         
         layout.addLayout(grid_layout)
         
-        # カスタム背景アップロードボタン
-        custom_btn = QPushButton("📁 カスタム背景画像をアップロード")
-        custom_btn.setStyleSheet("""
+        # 統一デザインのボタンスタイル
+        BUTTON_STYLE = """
             QPushButton {
-                padding: 8px;
-                background-color: #9b59b6;
+                background-color: #3498db;
                 color: white;
-                border: none;
-                border-radius: 4px;
                 font-weight: bold;
+                border-radius: 5px;
+                padding: 8px 16px;
             }
             QPushButton:hover {
-                background-color: #8e44ad;
+                background-color: #2980b9;
+            }
+        """
+        
+        # カスタム背景エリア
+        custom_layout = QHBoxLayout()
+        
+        # カスタム背景アップロードボタン
+        custom_btn = QPushButton("カスタム背景画像をアップロード")
+        custom_btn.setStyleSheet(BUTTON_STYLE)
+        custom_btn.clicked.connect(self._upload_custom_background)
+        custom_layout.addWidget(custom_btn)
+        
+        # カスタム背景プレビュー（選択時に表示）
+        self.custom_preview_label = QLabel()
+        self.custom_preview_label.setFixedSize(60, 60)
+        self.custom_preview_label.setStyleSheet("""
+            QLabel {
+                border: 3px solid #2ecc71;
+                border-radius: 5px;
+                background-color: #f0f0f0;
             }
         """)
-        custom_btn.clicked.connect(self._upload_custom_background)
-        layout.addWidget(custom_btn)
+        self.custom_preview_label.setVisible(False)
+        self.custom_preview_label.setScaledContents(True)
+        custom_layout.addWidget(self.custom_preview_label)
+        
+        # カスタム背景ファイル名
+        self.custom_filename_label = QLabel("")
+        self.custom_filename_label.setStyleSheet("font-size: 9pt; color: #2ecc71; font-weight: bold;")
+        self.custom_filename_label.setVisible(False)
+        custom_layout.addWidget(self.custom_filename_label)
+        
+        custom_layout.addStretch()
+        layout.addLayout(custom_layout)
         
         layout.addStretch()
     
-    def _create_background_button(self, bg_id: str, bg_info: Dict[str, str]) -> QPushButton:
-        """背景ボタンを作成"""
-        btn = QPushButton()
+    def _create_background_button(self, bg_id: str, bg_info: Dict[str, str]) -> QToolButton:
+        """背景ボタンを作成（画像の下にテキスト表示）"""
+        btn = QToolButton()
         btn.setCheckable(True)
+        btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)  # アイコンの下にテキスト
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        btn.setMinimumSize(100, 100)
-        btn.setMaximumSize(130, 130)
+        btn.setMinimumSize(110, 130)
+        btn.setMaximumSize(140, 160)
         
         # ボタンの内容を設定
         image_path = bg_info["image"]
         name = bg_info["name"]
-        emoji = bg_info.get("emoji", "")
-        color = bg_info.get("color", "#FFFFFF")
         
         # 画像が存在するか確認
         if Path(image_path).exists():
-            # 画像をアイコンとして設定
             pixmap = QPixmap(image_path)
             btn.setIcon(QIcon(pixmap))
-            btn.setIconSize(btn.size() * 0.7)
-            btn.setText(name)
+            btn.setIconSize(QSize(90, 90))
+        
+        # テキスト設定
+        btn.setText(name)
+        
+        # グレーの場合のみグレー背景、それ以外は白背景
+        if bg_id == "gray":
+            bg_color = "#c0c0c0"
+            hover_bg = "#d0d0d0"
+            checked_bg = "#b0b0b0"
         else:
-            # 画像がない場合は色+絵文字+テキスト
-            btn.setText(f"{emoji}\n{name}")
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    font-size: 12pt;
-                    padding: 10px;
-                    background-color: {color};
-                }}
-            """)
+            bg_color = "white"
+            hover_bg = "#f0f8ff"
+            checked_bg = "#e8f8f5"
         
         # スタイル設定
-        base_style = btn.styleSheet()
-        btn.setStyleSheet(base_style + """
-            QPushButton {
+        btn.setStyleSheet(f"""
+            QToolButton {{
                 border: 2px solid #ddd;
                 border-radius: 8px;
-            }
-            QPushButton:hover {
-                border-color: #9b59b6;
-            }
-            QPushButton:checked {
+                background-color: {bg_color};
+                font-size: 9pt;
+                padding: 5px;
+            }}
+            QToolButton:hover {{
+                border-color: #3498db;
+                background-color: {hover_bg};
+            }}
+            QToolButton:checked {{
                 border-color: #2ecc71;
                 border-width: 3px;
-            }
+                background-color: {checked_bg};
+            }}
         """)
         
         # クリック時の処理
@@ -210,6 +244,10 @@ class BackgroundGalleryWidget(QWidget):
         """背景が選択された時の処理"""
         self.selected_bg_id = bg_id
         self.custom_bg_image = None  # カスタム画像をクリア
+        
+        # カスタムプレビューを非表示
+        self.custom_preview_label.setVisible(False)
+        self.custom_filename_label.setVisible(False)
         
         # シグナルを発火
         self.background_selected.emit(
@@ -234,6 +272,16 @@ class BackgroundGalleryWidget(QWidget):
             # すべてのプリセットボタンの選択を解除
             for btn in self.button_group.buttons():
                 btn.setChecked(False)
+            
+            # カスタム背景プレビューを表示
+            pixmap = QPixmap(file_path)
+            self.custom_preview_label.setPixmap(pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.custom_preview_label.setVisible(True)
+            
+            # ファイル名を表示
+            filename = Path(file_path).name
+            self.custom_filename_label.setText(f"選択中: {filename}")
+            self.custom_filename_label.setVisible(True)
             
             # カスタム背景用の説明を生成
             description = f"custom background from uploaded image"

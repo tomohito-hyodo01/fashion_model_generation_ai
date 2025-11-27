@@ -15,7 +15,8 @@ class ChatInstructionParser:
         """
         self.api_key = api_key
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+        # 通常の画像生成と同じモデルを使用（クォータ共有）
+        self.model = genai.GenerativeModel('gemini-2.0-flash')
     
     def parse_instruction(
         self,
@@ -40,6 +41,10 @@ class ChatInstructionParser:
         try:
             # Gemini APIで解析
             response = self.model.generate_content(prompt)
+            
+            # デバッグ: 生のレスポンスを出力
+            print(f"[Chat Parser] Gemini生レスポンス:")
+            print(f"{response.text[:500]}...")
             
             # レスポンスをパース
             modifications = self._parse_response(response.text)
@@ -175,28 +180,41 @@ class ChatInstructionParser:
         updated_params = base_params.copy()
         changes = modifications.get("changes", {})
         
+        print(f"[Chat Parser] apply_modifications - 入力changes: {changes}")
+        
         # 各パラメータを更新
         for key, value in changes.items():
             if value is not None:
+                print(f"[Chat Parser] パラメータ更新: {key} = {value}")
+                
                 if key == "prompt_additions":
                     # カスタム説明に追加
                     existing_desc = updated_params.get("custom_description", "")
                     updated_params["custom_description"] = f"{existing_desc} {value}".strip()
+                    print(f"[Chat Parser] custom_description更新: {updated_params['custom_description']}")
                 elif key in ["lighting", "expression"]:
                     # カスタム説明に追加
                     existing_desc = updated_params.get("custom_description", "")
                     updated_params["custom_description"] = f"{existing_desc} {key}: {value}".strip()
+                    print(f"[Chat Parser] custom_description更新({key}): {updated_params['custom_description']}")
                 else:
                     # 直接パラメータを更新
                     updated_params[key] = value
+        
+        print(f"[Chat Parser] apply_modifications - 出力params: {updated_params}")
         
         return updated_params
 
 
 # テスト用
 if __name__ == "__main__":
-    # テスト用APIキー
-    TEST_API_KEY = "AIzaSyDLQVe0L5jn6R7lJNV4coe5FY-ICRHtSIg"
+    import os
+    
+    # 環境変数からAPIキーを取得
+    TEST_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+    if not TEST_API_KEY:
+        print("環境変数 GEMINI_API_KEY を設定してください")
+        exit(1)
     
     parser = ChatInstructionParser(TEST_API_KEY)
     
