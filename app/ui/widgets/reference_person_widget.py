@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Optional
 from PIL import Image
 
+from ui.styles import Styles
+
 
 class ReferencePersonWidget(QWidget):
     """参考人物画像ウィジェット
@@ -65,34 +67,21 @@ class ReferencePersonWidget(QWidget):
         
         # ボタン
         btn_layout = QHBoxLayout()
-        
-        # 統一デザインのボタンスタイル
-        BUTTON_STYLE = """
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                font-weight: bold;
-                border-radius: 5px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-            }
-            QPushButton:disabled {
-                background-color: #95a5a6;
-            }
-        """
-        
+
         # アップロードボタン
         self.upload_btn = QPushButton("人物画像を選択")
-        self.upload_btn.setStyleSheet(BUTTON_STYLE)
+        self.upload_btn.setStyleSheet(Styles.BUTTON_PRIMARY)
+        self.upload_btn.setMinimumHeight(40)
+        self.upload_btn.setCursor(Qt.PointingHandCursor)
         self.upload_btn.clicked.connect(self._upload_person_image)
         btn_layout.addWidget(self.upload_btn)
-        
-        # クリアボタン
+
+        # クリアボタン（グレーのセカンダリスタイル）
         self.clear_btn = QPushButton("クリア")
         self.clear_btn.setEnabled(False)
-        self.clear_btn.setStyleSheet(BUTTON_STYLE)
+        self.clear_btn.setStyleSheet(Styles.BUTTON_SECONDARY)
+        self.clear_btn.setMinimumHeight(40)
+        self.clear_btn.setCursor(Qt.PointingHandCursor)
         self.clear_btn.clicked.connect(self._clear_person_image)
         btn_layout.addWidget(self.clear_btn)
         

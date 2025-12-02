@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QGroupBox,
     QGridLayout,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap, QIcon
@@ -22,6 +23,8 @@ from PIL import Image
 from io import BytesIO
 from typing import List, Dict, Optional
 from datetime import datetime
+
+from ui.styles import Styles, Colors
 
 
 class HistoryItemWidget(QWidget):
@@ -143,6 +146,7 @@ class HistoryPanel(QWidget):
         # 履歴リスト
         self.history_list = QListWidget()
         self.history_list.setSpacing(5)
+        self.history_list.setStyleSheet(Styles.LIST_WIDGET + Styles.SCROLL_AREA)
         layout.addWidget(self.history_list)
         
         # 統計情報

@@ -15,9 +15,10 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QGridLayout,
     QCheckBox,
+    QStackedWidget,
 )
 from PySide6.QtCore import Qt, Signal, QThread
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QPixmap, QIcon
 from pathlib import Path
 from typing import List, Optional, Dict
 from PIL import Image
@@ -41,6 +42,9 @@ from ui.widgets.background_gallery import BackgroundGalleryWidget
 from ui.widgets.chat_refinement import ChatRefinementWidget
 from ui.widgets.history_panel import HistoryPanel
 from ui.widgets.reference_person_widget import ReferencePersonWidget
+from ui.screens import HomeScreen, GenerationScreen, EditScreen
+from ui.widgets.side_menu import SideMenu
+from ui.styles import Styles, Colors
 
 
 class GenerationWorker(QThread):
@@ -308,9 +312,14 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Virtual Fashion Try-On")
+        self.setWindowTitle("Virtual Model Generator")
         self.setMinimumSize(1400, 900)
         self.resize(1600, 1000)  # 起動時のサイズを大きく
+
+        # ウィンドウアイコンを設定
+        icon_path = Path(__file__).parent.parent / "assets" / "icons" / "icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         # 設定とAPIキー管理
         self.config_manager = ConfigManager()
@@ -345,86 +354,314 @@ class MainWindow(QMainWindow):
 
         # UIを構築
         self._setup_ui()
-        
-        # メニューバーを構築
-        self._setup_menubar()
 
         # APIキーの確認
         self._check_api_keys()
 
     def _setup_ui(self):
-        """UIをセットアップ"""
+        """UIをセットアップ - マルチページアーキテクチャ"""
         central_widget = QWidget()
+        central_widget.setObjectName("centralWidget")
         self.setCentralWidget(central_widget)
 
-        main_layout = QVBoxLayout(central_widget)
+        # メインレイアウト（水平: サイドメニュー + コンテンツ）
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # トップエリア（参考人物 + 衣類画像 + モデル属性）
-        top_widget = QWidget()
-        top_widget.setMaximumHeight(280)  # 高さ制限
-        top_layout = QHBoxLayout(top_widget)
-        top_layout.setContentsMargins(0, 0, 0, 0)
+        # サイドメニュー
+        self.side_menu = SideMenu()
+        self.side_menu.screen_changed.connect(self._on_screen_changed)
+        main_layout.addWidget(self.side_menu)
 
-        # 左: 参考人物画像
-        reference_person_group = self._create_reference_person_group()
-        top_layout.addWidget(reference_person_group, stretch=1)
+        # コンテンツエリア（縦: プログレスバー + スタック）
+        content_widget = QWidget()
+        content_widget.setStyleSheet(f"background-color: {Colors.BG_MAIN};")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
 
-        # 中央: 衣類画像アップロード
-        upload_group = self._create_upload_group()
-        top_layout.addWidget(upload_group, stretch=1)
-
-        # 右: モデル属性選択
-        model_group = self._create_model_attributes_group()
-        top_layout.addWidget(model_group, stretch=2)
-
-        main_layout.addWidget(top_widget)
-
-        # 中段: 生成設定
-        settings_group = self._create_generation_settings_group()
-        settings_group.setMaximumHeight(120)  # 高さ制限
-        main_layout.addWidget(settings_group)
-
-        # 進捗バー
+        # グローバルプログレスバー
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setFormat("%p%")
-        self.progress_bar.setFixedHeight(25)  # 固定高さ
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 2px solid #3498db;
-                border-radius: 5px;
-                text-align: center;
-                background-color: #ecf0f1;
-                font-weight: bold;
-                font-size: 12pt;
-            }
-            QProgressBar::chunk {
-                background-color: #3498db;
-                border-radius: 3px;
-            }
-        """)
-        main_layout.addWidget(self.progress_bar)
+        self.progress_bar.setFixedHeight(6)
+        self.progress_bar.setStyleSheet(Styles.PROGRESS_BAR)
+        content_layout.addWidget(self.progress_bar)
 
-        # 下段: 履歴 + 結果ギャラリー + チャット（3カラム） - 拡大
-        bottom_layout = QHBoxLayout()
-        
-        # 左: 履歴パネル
-        history_group = self._create_history_group()
-        history_group.setMinimumHeight(500)  # 最小高さ
-        bottom_layout.addWidget(history_group, stretch=1)
-        
-        # 中央: 結果ギャラリー
-        gallery_group = self._create_gallery_group()
-        gallery_group.setMinimumHeight(500)  # 最小高さ
-        bottom_layout.addWidget(gallery_group, stretch=2)
-        
-        # 右: チャット修正パネル
-        chat_group = self._create_chat_group()
-        chat_group.setMinimumHeight(500)  # 最小高さ
-        bottom_layout.addWidget(chat_group, stretch=1)
-        
-        main_layout.addLayout(bottom_layout, stretch=10)  # 大きくstretch
+        # スタックウィジェット（画面切り替え用）
+        self.content_stack = QStackedWidget()
+
+        # 各画面を作成
+        self._create_screens()
+
+        content_layout.addWidget(self.content_stack)
+        main_layout.addWidget(content_widget, stretch=1)
+
+    def _create_screens(self):
+        """各画面を作成・設定"""
+        # ホーム画面 (index 0)
+        self.home_screen = HomeScreen()
+        self.home_screen.navigate_to_generation.connect(lambda: self._navigate_to("generation"))
+        self.home_screen.navigate_to_edit.connect(lambda: self._navigate_to("edit"))
+        self.content_stack.addWidget(self.home_screen)
+
+        # 生成画面 (index 1)
+        self.generation_screen = GenerationScreen()
+        self.generation_screen.generation_requested.connect(self._on_generation_requested_from_screen)
+        self.generation_screen.reference_person_changed.connect(self._on_reference_person_changed_from_screen)
+        self.content_stack.addWidget(self.generation_screen)
+
+        # 編集画面 (index 2)
+        self.edit_screen = EditScreen(self.history_manager)
+        self.edit_screen.refinement_requested.connect(self._on_refinement_requested)
+        self.edit_screen.history_item_selected.connect(self._on_history_selected_from_screen)
+        self.edit_screen.image_selected.connect(self._on_gallery_image_selected_from_screen)
+        self.edit_screen.video_regeneration_requested.connect(self._on_video_regeneration_requested_from_screen)
+        self.content_stack.addWidget(self.edit_screen)
+
+    def _navigate_to(self, screen_name: str):
+        """指定した画面に遷移"""
+        screen_map = {"home": 0, "generation": 1, "edit": 2}
+        index = screen_map.get(screen_name, 0)
+        self.content_stack.setCurrentIndex(index)
+        self.side_menu.set_current_screen(screen_name)
+
+    def _on_screen_changed(self, screen_name: str):
+        """サイドメニューからの画面変更"""
+        self._navigate_to(screen_name)
+
+    def _on_reference_person_changed_from_screen(self, image_path: str):
+        """GenerationScreenから参考人物変更"""
+        if image_path:
+            self.reference_person_image = image_path
+            self.reference_person_name = Path(image_path).stem
+        else:
+            self.reference_person_image = None
+            self.reference_person_name = ""
+
+    def _on_generation_requested_from_screen(self, params: dict):
+        """GenerationScreenから生成リクエスト"""
+        # パラメータを内部状態に設定
+        self.garments = params.get("garments", [])
+        self.generation_mode = params.get("generation_mode", "variety")
+
+        # 参考人物
+        ref_path = self.generation_screen.get_reference_person_path()
+        if ref_path:
+            self.reference_person_image = ref_path
+        else:
+            self.reference_person_image = None
+
+        # 生成パラメータを保存
+        self.last_generation_params = {
+            "garments": self.garments,
+            "model_attrs": params.get("model_attrs", {}),
+            "config": params.get("config", {}),
+        }
+
+        # ポーズと背景の情報を取得
+        model_attrs = params.get("model_attrs", {})
+        self.selected_pose_info = (
+            model_attrs.get("pose", "front"),
+            model_attrs.get("pose_description", ""),
+            ""
+        )
+        self.selected_background_info = (
+            model_attrs.get("background", "white"),
+            model_attrs.get("background_description", ""),
+            ""
+        )
+
+        # 生成を開始（既存のロジックを使用）
+        self._start_generation_with_params(params)
+
+    def _on_history_selected_from_screen(self, history_id: int, images: list, parameters: dict):
+        """EditScreenから履歴選択"""
+        # 既存の _on_history_selected と同等の処理
+        print(f"[History] 履歴を読み込み: ID={history_id}, 画像数={len(images)}")
+        self.statusBar().showMessage(f"履歴ID {history_id} を読み込みました", 3000)
+
+    def _on_gallery_image_selected_from_screen(self, image: Image.Image, index: int):
+        """EditScreenからギャラリー画像選択"""
+        print(f"\n[MainWindow] ギャラリーで画像 {index+1} が選択されました")
+
+        # 選択された画像を保存
+        self.selected_image_for_edit = image
+
+        # パラメータを取得
+        if self.last_generation_params:
+            params_with_image = self.last_generation_params.copy()
+        else:
+            params_with_image = {
+                "garments": self.garments,
+                "model_attrs": {
+                    "gender": "女性",
+                    "age_range": "20代",
+                    "ethnicity": "アジア",
+                    "body_type": "標準",
+                    "pose": self.selected_pose_info[0] if self.selected_pose_info else "front",
+                    "background": self.selected_background_info[0] if self.selected_background_info else "white",
+                },
+                "config": {
+                    "size": "1024x1024",
+                    "num_outputs": 1
+                }
+            }
+
+        # 選択画像をパラメータに追加
+        params_with_image['selected_image'] = image
+
+        # EditScreenのチャットウィジェットに設定
+        self.edit_screen.set_chat_image(image, params_with_image)
+        print(f"[MainWindow] 画像 {index+1} がチャット修正用に選択されました")
+
+    def _on_video_regeneration_requested_from_screen(self, image: Image.Image):
+        """EditScreenから動画再生成リクエスト"""
+        settings = {
+            "duration": 10,
+            "resolution": "1080p",
+            "prompt": "fashion model rotating 360 degrees and striking elegant poses"
+        }
+        self._on_video_generation_requested(image, settings)
+
+    def _start_generation_with_params(self, params: dict):
+        """パラメータを使って生成を開始"""
+        if not params.get("garments"):
+            QMessageBox.warning(self, "警告", "衣類画像を追加してください。")
+            return
+
+        # モデル属性を取得
+        model_attrs_dict = params.get("model_attrs", {})
+        model_attrs = ModelAttributes(
+            gender=model_attrs_dict.get("gender", "female"),
+            age_range=model_attrs_dict.get("age_range", "20s"),
+            ethnicity=model_attrs_dict.get("ethnicity", "asian"),
+            body_type=model_attrs_dict.get("body_type", "standard"),
+            height="standard",
+            pose=model_attrs_dict.get("pose", "front"),
+            background=model_attrs_dict.get("background", "white"),
+            custom_description=f"Pose: {model_attrs_dict.get('pose_description', '')}. Background: {model_attrs_dict.get('background_description', '')}",
+        )
+
+        # 生成設定
+        config_dict = params.get("config", {})
+        generate_video = params.get("generate_video", False)
+        num_images = config_dict.get("num_outputs", 1)
+        if generate_video:
+            num_images = max(1, num_images - 1)
+
+        config = GenerationConfig(
+            provider="gemini",
+            quality="standard",
+            size=config_dict.get("size", "1024x1024"),
+            num_outputs=num_images,
+        )
+
+        # 参考人物モードの場合はFASHN、それ以外はGemini
+        if self.reference_person_image:
+            self._start_fashn_tryon(config)
+        else:
+            self._start_gemini_generation(model_attrs, config, params)
+
+    def _start_fashn_tryon(self, config):
+        """FASHN Virtual Try-Onを開始"""
+        print(f"[MainWindow] 参考人物モード: FASHN Virtual Try-Onを使用")
+
+        # FASHN APIキーを取得
+        fashn_key = self.api_key_manager.load_api_key("fashn")
+        if not fashn_key:
+            fashn_key = "fa-uCRCpnOMl0uK-ylgH33BqyMDdtVyiEZ9SDRLo"
+            print("[MainWindow] デフォルトFASHN APIキーを使用")
+
+        from core.adapters.fashn_tryon_adapter import FashnTryonAdapter
+        tryon_adapter = FashnTryonAdapter(fashn_key)
+
+        # 衣類のカテゴリーを判定
+        if self.garments:
+            first_garment = self.garments[0]
+            category_map = {
+                "TOP": "tops",
+                "BOTTOM": "bottoms",
+                "ONE_PIECE": "one-pieces",
+                "OUTER": "tops",
+                "ACCESSORY": "tops"
+            }
+            category = category_map.get(first_garment.clothing_type, "auto")
+            garment_path = first_garment.image_path
+        else:
+            QMessageBox.warning(self, "警告", "衣類画像を追加してください。")
+            return
+
+        # ワーカースレッドで実行
+        self.tryon_worker = FashnTryonWorker(
+            tryon_adapter,
+            self.reference_person_image,
+            garment_path,
+            category,
+            config.num_outputs
+        )
+        self.tryon_worker.progress_updated.connect(self._update_progress)
+        self.tryon_worker.generation_completed.connect(self._on_generation_completed)
+        self.tryon_worker.generation_failed.connect(self._on_generation_failed)
+
+        # UIを更新
+        self.generation_screen.set_generating(True)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+
+        self.tryon_worker.start()
+
+    def _start_gemini_generation(self, model_attrs, config, params):
+        """Gemini生成を開始"""
+        print(f"[MainWindow] 通常モード: Geminiを使用")
+
+        adapter = self._create_adapter("gemini")
+        if not adapter:
+            QMessageBox.warning(
+                self,
+                "エラー",
+                "Gemini APIキーが設定されていません。"
+            )
+            return
+
+        # カスタム背景画像を設定
+        bg_image = self.selected_background_info[2] if len(self.selected_background_info) > 2 else ""
+        if bg_image and Path(bg_image).exists():
+            adapter.set_custom_background(bg_image)
+        else:
+            adapter.set_custom_background(None)
+
+        # GenerateServiceを作成
+        fidelity_checker = FidelityChecker()
+        service = GenerateService(adapter, fidelity_checker)
+
+        # マルチアングルジェネレーターを作成
+        multi_angle_generator = None
+        if self.generation_mode == "angle":
+            from core.pipeline.multi_angle_generator import MultiAngleGenerator
+            multi_angle_generator = MultiAngleGenerator()
+
+        # ワーカースレッドで実行
+        self.worker = GenerationWorker(
+            service,
+            self.garments,
+            model_attrs,
+            config,
+            mode=self.generation_mode,
+            multi_angle_generator=multi_angle_generator
+        )
+        self.worker.progress_updated.connect(self._update_progress)
+        self.worker.generation_completed.connect(self._on_generation_completed)
+        self.worker.generation_failed.connect(self._on_generation_failed)
+
+        # UIを更新
+        self.generation_screen.set_generating(True)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(0)
+
+        self.worker.start()
 
     def _create_reference_person_group(self) -> QGroupBox:
         """参考人物グループを作成"""
@@ -904,14 +1141,15 @@ class MainWindow(QMainWindow):
     def _on_chat_refinement_completed(self, new_image: Image.Image, ai_response: str):
         """チャット修正完了時の処理"""
         self.progress_bar.setVisible(False)
-        
-        # チャットウィジェットに通知
-        self.chat_widget.on_refinement_completed(new_image, ai_response)
-        
+        self.edit_screen.hide_progress()
+
+        # EditScreenに通知（チャットウィジェットに内部で転送）
+        self.edit_screen.on_refinement_completed(new_image, ai_response)
+
         # ギャラリーに追加
-        current_images = self.gallery_view.get_images()
+        current_images = self.edit_screen.get_images()
         current_images.append(new_image)
-        self.gallery_view.set_images(current_images, {})
+        self.edit_screen.set_images(current_images, {})
         
         # 履歴に保存（チャット修正画像）
         try:
@@ -942,7 +1180,7 @@ class MainWindow(QMainWindow):
             )
             
             # 履歴パネルを更新
-            self.history_panel.refresh()
+            self.edit_screen.refresh_history()
             
             print(f"[History] チャット修正画像を履歴に保存: ID={history_id}")
         except Exception as e:
@@ -1327,66 +1565,27 @@ class MainWindow(QMainWindow):
     def _on_generation_completed(self, images, metadata):
         """生成完了時の処理"""
         self.progress_bar.setVisible(False)
-        self.generate_btn.setEnabled(True)
+        self.generation_screen.set_generating(False)
         self.statusBar().showMessage(f"{len(images)}枚の画像を生成しました", 3000)
 
-        # ギャラリーに表示
-        self.gallery_view.set_images(images, metadata)
-        
-        # 動画生成チェックボックスがONの場合
-        if self.auto_video_checkbox.isChecked() and len(images) >= 1:
-            print(f"[Auto Video] 1枚目の画像から自動的に動画を生成します")
-            self.statusBar().showMessage("1枚目の画像から動画を生成中...", 0)
-            
-            # 1枚目の画像を取得
-            first_image = images[0]
-            
-            # 自動的に動画生成を開始（10秒、1080p固定）
-            default_settings = {
-                "duration": 10,  # 10秒固定
-                "resolution": "1080p",  # 1080p固定
-                "prompt": "fashion model rotating 360 degrees and striking elegant poses from different angles, turning left and right, showing front, side and back views, professional runway modeling, smooth transitions between poses"
-            }
-            
-            # 少し待ってから動画生成を開始（UI更新のため）
-            from PySide6.QtCore import QTimer
-            QTimer.singleShot(1000, lambda: self._on_video_generation_requested(first_image, default_settings))
-            print(f"[Auto Video] 動画生成をスケジュールしました")
-        
-        # 最後の生成パラメータを保存（チャット修正用）
-        pose_id, pose_description, _ = self.selected_pose_info
-        bg_id, bg_description, _ = self.selected_background_info
-        
-        self.last_generation_params = {
-            "garments": self.garments,
-            "model_attrs": {
-                "gender": self.gender_combo.currentText(),
-                "age_range": self.age_combo.currentText(),
-                "ethnicity": self.ethnicity_combo.currentText(),
-                "body_type": self.body_type_combo.currentText(),
-                "pose": pose_id,
-                "background": bg_id,
-                "pose_description": pose_description,
-                "background_description": bg_description
-            },
-            "config": {
-                "size": self.size_combo.currentText(),
-                "num_outputs": self.num_outputs_spin.value()
-            }
-        }
-        
+        # 編集画面のギャラリーに表示
+        self.edit_screen.set_images(images, metadata)
+
+        # 編集画面に自動遷移
+        self._navigate_to("edit")
+
         # 履歴に保存
         self._save_to_history(images, metadata)
 
     def _on_generation_failed(self, error_message: str):
         """生成失敗時の処理"""
         self.progress_bar.setVisible(False)
-        self.generate_btn.setEnabled(True)
+        self.generation_screen.set_generating(False)
         QMessageBox.critical(self, "エラー", f"画像生成に失敗しました:\n{error_message}")
 
     def _save_results(self):
         """結果を保存"""
-        images = self.gallery_view.get_images()
+        images = self.edit_screen.get_images()
         if not images:
             QMessageBox.information(self, "情報", "保存する画像がありません。")
             return
@@ -1403,7 +1602,7 @@ class MainWindow(QMainWindow):
 
     def _clear_results(self):
         """結果をクリア"""
-        self.gallery_view.clear()
+        self.edit_screen.clear_gallery()
     
     def _save_to_history(self, images: List[Image.Image], metadata: Dict):
         """生成結果を履歴に保存"""
@@ -1433,7 +1632,7 @@ class MainWindow(QMainWindow):
             )
             
             # 履歴パネルを更新
-            self.history_panel.refresh()
+            self.edit_screen.refresh_history()
             
             print(f"[History] 履歴保存完了: ID={history_id}")
         
