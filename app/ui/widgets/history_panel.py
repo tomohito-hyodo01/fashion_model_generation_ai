@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QScrollArea,
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QPixmap, QIcon
 from PIL import Image
 from io import BytesIO
@@ -44,48 +44,28 @@ class HistoryItemWidget(QWidget):
         """UIをセットアップ"""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
-        
+        layout.setSpacing(8)
+
         # サムネイル
         thumb_label = QLabel()
         pixmap = self._pil_to_pixmap(self.thumbnail)
-        scaled_pixmap = pixmap.scaled(80, 80, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        scaled_pixmap = pixmap.scaled(60, 60, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         thumb_label.setPixmap(scaled_pixmap)
-        thumb_label.setFixedSize(80, 80)
+        thumb_label.setFixedSize(60, 60)
         layout.addWidget(thumb_label)
-        
-        # 情報
-        info_layout = QVBoxLayout()
-        
-        # 日時
+
+        # 日時のみ表示
         created_at = datetime.fromisoformat(self.history_data["created_at"])
-        date_label = QLabel(created_at.strftime("%Y-%m-%d %H:%M"))
-        date_label.setStyleSheet("font-weight: bold;")
-        info_layout.addWidget(date_label)
-        
-        # モード・枚数
-        mode_text = "角度違い" if self.history_data["generation_mode"] == "angle" else "種類違い"
-        mode_label = QLabel(f"{mode_text} / {self.history_data['num_images']}枚")
-        mode_label.setStyleSheet("font-size: 9pt; color: #666;")
-        info_layout.addWidget(mode_label)
-        
-        # タグ
-        if self.history_data.get("tags"):
-            tags_text = " ".join([f"#{tag}" for tag in self.history_data["tags"]])
-            tags_label = QLabel(tags_text)
-            tags_label.setStyleSheet("font-size: 8pt; color: #3498db;")
-            info_layout.addWidget(tags_label)
-        
-        info_layout.addStretch()
-        layout.addLayout(info_layout)
-        
+        date_label = QLabel(created_at.strftime("%Y-%m-%d\n%H:%M"))
+        date_label.setStyleSheet(f"font-size: 10pt; color: {Colors.TEXT_PRIMARY};")
+        layout.addWidget(date_label)
+
         layout.addStretch()
-        
-        # ボタン
-        btn_layout = QVBoxLayout()
-        
-        # 削除ボタンのみ（お気に入り機能は削除）
+
+        # 削除ボタン（元のデザイン）
         delete_btn = QPushButton("×")
-        delete_btn.setFixedSize(30, 30)
+        delete_btn.setFixedSize(28, 28)
+        delete_btn.setCursor(Qt.PointingHandCursor)
         delete_btn.setStyleSheet("""
             QPushButton {
                 background-color: #3498db;
@@ -99,10 +79,11 @@ class HistoryItemWidget(QWidget):
             }
         """)
         delete_btn.clicked.connect(lambda: self.delete_requested.emit(self.history_data["id"]))
-        btn_layout.addWidget(delete_btn)
-        
-        layout.addLayout(btn_layout)
-        
+        layout.addWidget(delete_btn)
+
+        # 固定の高さを設定
+        self.setMinimumHeight(70)
+
         # クリック可能に
         self.setCursor(Qt.PointingHandCursor)
     
@@ -137,22 +118,23 @@ class HistoryPanel(QWidget):
     def _setup_ui(self):
         """UIをセットアップ"""
         layout = QVBoxLayout(self)
-        
+        layout.setContentsMargins(0, 0, 0, 0)
+
         # フィルターコンボボックス（非表示で保持、内部でのみ使用）
         self.filter_combo = QComboBox()
         self.filter_combo.addItems(["すべて", "お気に入り", "種類違い", "角度違い"])
         self.filter_combo.setVisible(False)  # 非表示にする
-        
+
         # 履歴リスト
         self.history_list = QListWidget()
-        self.history_list.setSpacing(5)
-        self.history_list.setStyleSheet(Styles.LIST_WIDGET + Styles.SCROLL_AREA)
+        self.history_list.setSpacing(2)
+        self.history_list.setStyleSheet(Styles.LIST_WIDGET + Styles.SCROLL_AREA + f"""
+            QListWidget::item {{
+                padding: 4px;
+                min-height: 72px;
+            }}
+        """)
         layout.addWidget(self.history_list)
-        
-        # 統計情報
-        self.stats_label = QLabel()
-        self.stats_label.setStyleSheet("font-size: 9pt; color: #666; padding: 5px;")
-        layout.addWidget(self.stats_label)
     
     def _load_history(self):
         """履歴を読み込み"""
@@ -189,10 +171,11 @@ class HistoryPanel(QWidget):
                 item_widget = HistoryItemWidget(history, thumbnails[0])
                 item_widget.item_clicked.connect(self._on_history_clicked)
                 item_widget.delete_requested.connect(self._on_delete_requested)
-                
+
                 # リストアイテムを作成
                 item = QListWidgetItem(self.history_list)
-                item.setSizeHint(item_widget.sizeHint())
+                # 固定の高さを明示的に設定（十分な高さを確保）
+                item.setSizeHint(QSize(0, 80))
                 self.history_list.addItem(item)
                 self.history_list.setItemWidget(item, item_widget)
     

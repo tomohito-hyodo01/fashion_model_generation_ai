@@ -10,6 +10,9 @@ from pathlib import Path
 import subprocess
 import sys
 import shutil
+from datetime import datetime
+
+from ui.styles import Styles, Colors
 
 # 動画再生用（オプション）
 try:
@@ -23,8 +26,9 @@ except ImportError:
 
 class GalleryView(QWidget):
     """結果ギャラリービュー"""
-    
+
     image_selected = Signal(Image.Image, int)  # 画像、インデックス
+    video_edit_requested = Signal(Image.Image, str)  # ソース画像、動画パス
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -32,6 +36,7 @@ class GalleryView(QWidget):
         self.metadata = {}
         self.selected_index = -1
         self.video_path: Optional[str] = None  # 生成された動画のパス
+        self.video_source_image: Optional[Image.Image] = None  # 動画の元画像
         self.media_player: Optional['QMediaPlayer'] = None  # 動画プレイヤー
         self.video_widget: Optional['QVideoWidget'] = None  # 動画表示ウィジェット
         self.audio_output = None  # オーディオ出力
@@ -77,9 +82,10 @@ class GalleryView(QWidget):
         self.video_path = None
         self._update_display()
     
-    def set_video(self, video_path: str):
+    def set_video(self, video_path: str, source_image: Optional[Image.Image] = None):
         """動画を設定してプレビューを表示"""
         self.video_path = video_path
+        self.video_source_image = source_image
         self._update_display()
     
     def get_video_path(self) -> Optional[str]:
@@ -93,20 +99,6 @@ class GalleryView(QWidget):
             widget = self.grid_layout.itemAt(i).widget()
             if widget:
                 widget.deleteLater()
-
-        # 統一デザインのボタンスタイル
-        BUTTON_STYLE = """
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                font-weight: bold;
-                border-radius: 5px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-            }
-        """
 
         # 画像を表示（2列）
         for i, img in enumerate(self.images):
@@ -127,12 +119,28 @@ class GalleryView(QWidget):
             label.setPixmap(scaled_pixmap)
             label.setAlignment(Qt.AlignCenter)
             container_layout.addWidget(label)
-            
-            # 選択ボタン
+
+            # ボタンレイアウト（横並び）
+            btn_layout = QHBoxLayout()
+            btn_layout.setSpacing(8)
+
+            # 保存ボタン
+            save_btn = QPushButton("保存")
+            save_btn.setCursor(Qt.PointingHandCursor)
+            save_btn.setMinimumHeight(36)
+            save_btn.setStyleSheet(Styles.BUTTON_SECONDARY)
+            save_btn.clicked.connect(lambda checked, idx=i, image=img: self._save_image(image, idx))
+            btn_layout.addWidget(save_btn)
+
+            # 修正ボタン
             select_btn = QPushButton("この画像を修正")
-            select_btn.setStyleSheet(BUTTON_STYLE)
+            select_btn.setCursor(Qt.PointingHandCursor)
+            select_btn.setMinimumHeight(36)
+            select_btn.setStyleSheet(Styles.BUTTON_PRIMARY)
             select_btn.clicked.connect(lambda checked, idx=i, image=img: self._on_image_clicked(image, idx))
-            container_layout.addWidget(select_btn)
+            btn_layout.addWidget(select_btn)
+
+            container_layout.addLayout(btn_layout)
 
             self.grid_layout.addWidget(container, row, col)
         
@@ -207,49 +215,43 @@ class GalleryView(QWidget):
             
             # ボタンレイアウト
             btn_layout = QHBoxLayout()
-            
+            btn_layout.setSpacing(8)
+
             # 再生/停止ボタン
             if VIDEO_PLAYBACK_AVAILABLE:
                 self.play_pause_btn = QPushButton("一時停止")
-                self.play_pause_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #27ae60;
-                        color: white;
-                        font-weight: bold;
-                        border-radius: 5px;
-                        padding: 8px 16px;
-                    }
-                    QPushButton:hover {
-                        background-color: #2ecc71;
-                    }
-                """)
+                self.play_pause_btn.setCursor(Qt.PointingHandCursor)
+                self.play_pause_btn.setMinimumHeight(36)
+                self.play_pause_btn.setStyleSheet(Styles.BUTTON_SUCCESS)
                 self.play_pause_btn.clicked.connect(self._toggle_play_pause)
                 btn_layout.addWidget(self.play_pause_btn)
             else:
                 play_btn = QPushButton("再生")
-                play_btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: #27ae60;
-                        color: white;
-                        font-weight: bold;
-                        border-radius: 5px;
-                        padding: 8px 16px;
-                    }
-                    QPushButton:hover {
-                        background-color: #2ecc71;
-                    }
-                """)
+                play_btn.setCursor(Qt.PointingHandCursor)
+                play_btn.setMinimumHeight(36)
+                play_btn.setStyleSheet(Styles.BUTTON_SUCCESS)
                 play_btn.clicked.connect(self._play_video)
                 btn_layout.addWidget(play_btn)
-            
+
             # 保存ボタン
             save_btn = QPushButton("保存")
-            save_btn.setStyleSheet(BUTTON_STYLE)
+            save_btn.setCursor(Qt.PointingHandCursor)
+            save_btn.setMinimumHeight(36)
+            save_btn.setStyleSheet(Styles.BUTTON_SECONDARY)
             save_btn.clicked.connect(self._save_video)
             btn_layout.addWidget(save_btn)
-            
+
+            # この動画を修正ボタン（ソース画像がある場合のみ表示）
+            if self.video_source_image is not None:
+                edit_video_btn = QPushButton("この動画を修正")
+                edit_video_btn.setCursor(Qt.PointingHandCursor)
+                edit_video_btn.setMinimumHeight(36)
+                edit_video_btn.setStyleSheet(Styles.BUTTON_PRIMARY)
+                edit_video_btn.clicked.connect(self._on_video_edit_clicked)
+                btn_layout.addWidget(edit_video_btn)
+
             video_layout.addLayout(btn_layout)
-            
+
             # 動画コンテナを追加（2列分の幅を使用）
             self.grid_layout.addWidget(video_container, video_row, 0, 1, 2)
     
@@ -257,6 +259,12 @@ class GalleryView(QWidget):
         """画像がクリックされた時"""
         self.selected_index = index
         self.image_selected.emit(image, index)
+
+    def _on_video_edit_clicked(self):
+        """動画修正ボタンがクリックされた時"""
+        if self.video_source_image is not None and self.video_path:
+            print(f"[GalleryView] 動画修正リクエスト: {self.video_path}")
+            self.video_edit_requested.emit(self.video_source_image, self.video_path)
     
     def _get_video_thumbnail(self, video_path: str) -> Optional[QPixmap]:
         """動画のサムネイル（最初のフレーム）を取得"""
@@ -351,6 +359,43 @@ class GalleryView(QWidget):
                     print(f"[Video] 動画を保存: {save_path}")
                 except Exception as e:
                     QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
+
+    def _save_image(self, image: Image.Image, index: int):
+        """画像を保存"""
+        # デフォルトのファイル名を生成
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"fashion_model_{timestamp}_{index + 1}.png"
+
+        # 保存先を選択
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "画像を保存",
+            default_filename,
+            "PNG画像 (*.png);;JPEG画像 (*.jpg *.jpeg);;すべてのファイル (*.*)"
+        )
+
+        if save_path:
+            try:
+                # 拡張子に応じて保存
+                if save_path.lower().endswith(('.jpg', '.jpeg')):
+                    # JPEGの場合はRGBに変換
+                    if image.mode == 'RGBA':
+                        rgb_image = Image.new('RGB', image.size, (255, 255, 255))
+                        rgb_image.paste(image, mask=image.split()[3])
+                        rgb_image.save(save_path, 'JPEG', quality=95)
+                    else:
+                        image.save(save_path, 'JPEG', quality=95)
+                else:
+                    image.save(save_path, 'PNG')
+
+                QMessageBox.information(
+                    self,
+                    "保存完了",
+                    f"画像を保存しました:\n{save_path}"
+                )
+                print(f"[Image] 画像を保存: {save_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "エラー", f"保存に失敗しました:\n{e}")
 
     def _pil_to_pixmap(self, pil_image: Image.Image) -> QPixmap:
         """PIL画像をQPixmapに変換"""

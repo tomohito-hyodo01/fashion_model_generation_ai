@@ -10,12 +10,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QScrollArea,
     QFrame,
+    QProgressBar,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PIL import Image
 from typing import List, Dict, Optional
 from io import BytesIO
+
+from ui.styles import Styles, Colors, Fonts, BorderRadius
 
 
 class ChatMessage(QFrame):
@@ -31,41 +34,51 @@ class ChatMessage(QFrame):
     def _setup_ui(self):
         """UIをセットアップ"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 5, 10, 5)
-        
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(4)
+
         # 送信者ラベル
         sender_label = QLabel("あなた" if self.sender == "user" else "AI")
         sender_label.setStyleSheet(f"""
             font-weight: bold;
-            color: {"#3498db" if self.sender == "user" else "#2ecc71"};
+            font-size: {Fonts.SIZE_SM};
+            color: {Colors.PRIMARY if self.sender == "user" else Colors.ACCENT_GREEN};
+            background: transparent;
         """)
         layout.addWidget(sender_label)
-        
+
         # メッセージテキスト
         message_label = QLabel(self.message)
         message_label.setWordWrap(True)
-        message_label.setStyleSheet("""
-            padding: 8px;
-            background-color: #f8f9fa;
-            border-radius: 5px;
+        message_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        message_label.setStyleSheet(f"""
+            padding: 6px 8px;
+            background-color: {Colors.BG_CARD};
+            border-radius: {BorderRadius.SM}px;
+            font-size: {Fonts.SIZE_SM};
+            color: {Colors.TEXT_PRIMARY};
         """)
         layout.addWidget(message_label)
-        
+
         # 画像がある場合は表示
         if self.image:
             image_label = QLabel()
             pixmap = self._pil_to_pixmap(self.image)
-            scaled_pixmap = pixmap.scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # 画像サイズを親ウィジェットの幅に合わせて調整（最大220px）
+            max_size = 220
+            scaled_pixmap = pixmap.scaled(max_size, max_size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             image_label.setPixmap(scaled_pixmap)
+            image_label.setAlignment(Qt.AlignLeft)
+            image_label.setStyleSheet("background: transparent;")
             layout.addWidget(image_label)
-        
+
         # スタイル設定
-        bg_color = "#e3f2fd" if self.sender == "user" else "#f1f8e9"
+        bg_color = Colors.PRIMARY_LIGHT if self.sender == "user" else Colors.SUCCESS_LIGHT
         self.setStyleSheet(f"""
             QFrame {{
                 background-color: {bg_color};
-                border-radius: 8px;
-                margin: 5px;
+                border-radius: {BorderRadius.MD}px;
+                margin: 3px 0px;
             }}
         """)
     
@@ -82,14 +95,19 @@ class ChatMessage(QFrame):
 
 class ChatRefinementWidget(QWidget):
     """チャットベースの画像修正ウィジェット"""
-    
+
     refinement_requested = Signal(str, dict)  # instruction, context
-    
+    video_refinement_requested = Signal(str, dict)  # instruction, context (動画修正用)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.conversation_history: List[Dict] = []
         self.current_image: Optional[Image.Image] = None
         self.original_params: Optional[Dict] = None
+        # 動画修正モード用
+        self.is_video_mode: bool = False
+        self.video_source_image: Optional[Image.Image] = None
+        self.video_path: Optional[str] = None
         self._setup_ui()
     
     def _setup_ui(self):
@@ -109,11 +127,13 @@ class ChatRefinementWidget(QWidget):
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        
+        scroll_area.setStyleSheet(Styles.SCROLL_AREA)
+
         self.chat_container = QWidget()
+        self.chat_container.setStyleSheet("background: transparent;")
         self.chat_layout = QVBoxLayout(self.chat_container)
         self.chat_layout.addStretch()
-        
+
         scroll_area.setWidget(self.chat_container)
         layout.addWidget(scroll_area, stretch=1)
         
@@ -148,9 +168,34 @@ class ChatRefinementWidget(QWidget):
         self.send_btn.setStyleSheet(BUTTON_STYLE)
         self.send_btn.clicked.connect(self._send_message)
         input_layout.addWidget(self.send_btn)
-        
+
         layout.addLayout(input_layout)
-        
+
+        # プログレスバー（送信ボタンの下に配置、初期は非表示）
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMinimum(0)
+        self.progress_bar.setMaximum(100)
+        self.progress_bar.setMinimumHeight(28)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("処理中... %p%")
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {Colors.BG_TERTIARY};
+                border: none;
+                border-radius: {BorderRadius.SM}px;
+                text-align: center;
+                font-weight: 600;
+                font-size: {Fonts.SIZE_SM};
+                color: {Colors.TEXT_PRIMARY};
+            }}
+            QProgressBar::chunk {{
+                background-color: {Colors.PRIMARY};
+                border-radius: {BorderRadius.SM}px;
+            }}
+        """)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+
         # 初期状態では無効化
         self.setEnabled(False)
     
@@ -159,18 +204,22 @@ class ChatRefinementWidget(QWidget):
         self.current_image = image
         self.original_params = params
         self.conversation_history = []
-        
+        # 動画モードをリセット
+        self.is_video_mode = False
+        self.video_source_image = None
+        self.video_path = None
+
         print(f"[Chat Widget] 画像とパラメータを設定")
         print(f"[Chat Widget] チャットを有効化します")
-        
+
         # チャットを有効化
         self.setEnabled(True)
         self.input_field.setEnabled(True)
         self.send_btn.setEnabled(True)
-        
+
         # チャット履歴をクリア
         self._clear_chat()
-        
+
         # AI初期メッセージを追加
         self._add_ai_message(
             "画像が選択されました！\n"
@@ -178,41 +227,104 @@ class ChatRefinementWidget(QWidget):
             "例：「もっと明るく」「背景を変更」「笑顔にして」",
             image=image
         )
-        
+
         print(f"[Chat Widget] チャット準備完了")
+
+    def set_video_source_image(self, source_image: Image.Image, video_path: str, params: Dict):
+        """動画修正用のソース画像を設定"""
+        self.current_image = source_image
+        self.video_source_image = source_image
+        self.video_path = video_path
+        self.original_params = params
+        self.conversation_history = []
+        # 動画モードを有効化
+        self.is_video_mode = True
+
+        print(f"[Chat Widget] 動画修正モード: ソース画像を設定")
+        print(f"[Chat Widget] 動画パス: {video_path}")
+
+        # チャットを有効化
+        self.setEnabled(True)
+        self.input_field.setEnabled(True)
+        self.send_btn.setEnabled(True)
+
+        # チャット履歴をクリア
+        self._clear_chat()
+
+        # AI初期メッセージを追加（動画モード用）
+        self._add_ai_message(
+            "動画の元画像が選択されました！\n"
+            "修正したい箇所を教えてください。\n"
+            "元画像を修正した後、動画を再生成します。\n"
+            "例：「もっと明るく」「背景を変更」「笑顔にして」",
+            image=source_image
+        )
+
+        print(f"[Chat Widget] 動画修正チャット準備完了")
     
     def _send_message(self):
         """メッセージを送信"""
         instruction = self.input_field.text().strip()
-        
+
         if not instruction:
             return
-        
+
         # ユーザーメッセージを追加
         self._add_user_message(instruction)
-        
+
         # 入力欄をクリア
         self.input_field.clear()
-        
+
         # 一時的に無効化
         self.send_btn.setEnabled(False)
         self.input_field.setEnabled(False)
-        
+
+        # プログレスバーを表示
+        self.progress_bar.setValue(0)
+        self.progress_bar.setVisible(True)
+
         # 修正リクエストを発火
         context = {
             "image": self.current_image,
             "params": self.original_params,
             "history": self.conversation_history
         }
-        self.refinement_requested.emit(instruction, context)
+
+        # 動画モードの場合は動画修正シグナルを発火
+        if self.is_video_mode:
+            context["video_path"] = self.video_path
+            context["video_source_image"] = self.video_source_image
+            self.video_refinement_requested.emit(instruction, context)
+        else:
+            self.refinement_requested.emit(instruction, context)
     
     def on_refinement_completed(self, new_image: Image.Image, ai_response: str):
         """修正完了時の処理"""
         self.current_image = new_image
-        
+
+        # プログレスバーを非表示
+        self.progress_bar.setVisible(False)
+
         # AIメッセージを追加
         self._add_ai_message(ai_response, image=new_image)
-        
+
+        # 入力を再有効化
+        self.send_btn.setEnabled(True)
+        self.input_field.setEnabled(True)
+        self.input_field.setFocus()
+
+    def on_video_refinement_completed(self, new_image: Image.Image, video_path: str, ai_response: str):
+        """動画修正完了時の処理"""
+        self.current_image = new_image
+        self.video_source_image = new_image
+        self.video_path = video_path
+
+        # プログレスバーを非表示
+        self.progress_bar.setVisible(False)
+
+        # AIメッセージを追加（動画再生成完了のメッセージ）
+        self._add_ai_message(ai_response, image=new_image)
+
         # 入力を再有効化
         self.send_btn.setEnabled(True)
         self.input_field.setEnabled(True)
@@ -220,8 +332,11 @@ class ChatRefinementWidget(QWidget):
     
     def on_refinement_failed(self, error_message: str):
         """修正失敗時の処理"""
+        # プログレスバーを非表示
+        self.progress_bar.setVisible(False)
+
         self._add_ai_message(f"エラーが発生しました: {error_message}")
-        
+
         # 入力を再有効化
         self.send_btn.setEnabled(True)
         self.input_field.setEnabled(True)
@@ -260,5 +375,15 @@ class ChatRefinementWidget(QWidget):
     def get_conversation_history(self) -> List[Dict]:
         """会話履歴を取得"""
         return self.conversation_history.copy()
+
+    def set_progress(self, message: str, value: int):
+        """プログレスバーの値を設定"""
+        self.progress_bar.setValue(value)
+        self.progress_bar.setFormat(f"{message} %p%")
+        self.progress_bar.setVisible(True)
+
+    def hide_progress(self):
+        """プログレスバーを非表示"""
+        self.progress_bar.setVisible(False)
 
 

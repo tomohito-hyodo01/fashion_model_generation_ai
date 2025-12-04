@@ -417,13 +417,61 @@ class GenerationScreen(QWidget):
         self._set_model_attrs_enabled(True)
 
     def _set_model_attrs_enabled(self, enabled: bool):
-        """モデル属性の活性/非活性を切り替え"""
+        """モデル属性の活性/非活性を切り替え（グレーアウト効果付き）"""
         self.model_attrs_tab_widget.setEnabled(enabled)
-        # グループボックスのタイトルも視覚的にわかるように変更
+
+        # グループボックスのタイトルとスタイルを変更
         if enabled:
             self.model_attrs_group.setTitle("モデル属性")
+            # 通常のスタイルに戻す
+            self.model_attrs_group.setStyleSheet(Styles.GROUP_BOX)
         else:
             self.model_attrs_group.setTitle("モデル属性（参考人物使用時は無効）")
+            # グレーアウト効果を適用
+            self.model_attrs_group.setStyleSheet(f"""
+                QGroupBox {{
+                    font-weight: 500;
+                    font-size: {Fonts.SIZE_SM};
+                    color: {Colors.TEXT_MUTED};
+                    background-color: {Colors.BG_TERTIARY};
+                    border: 1px solid {Colors.BORDER_LIGHT};
+                    border-top: 2px solid {Colors.BORDER_MEDIUM};
+                    border-radius: {BorderRadius.MD}px;
+                    margin-top: 8px;
+                    padding: 16px;
+                    padding-top: 28px;
+                }}
+                QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    left: 12px;
+                    top: 8px;
+                    padding: 2px 8px;
+                    background-color: {Colors.BG_TERTIARY};
+                    color: {Colors.TEXT_MUTED};
+                    font-weight: 600;
+                    font-size: {Fonts.SIZE_SM};
+                }}
+                QLabel {{
+                    color: {Colors.TEXT_MUTED};
+                }}
+                QComboBox {{
+                    background-color: {Colors.BG_TERTIARY};
+                    color: {Colors.TEXT_MUTED};
+                    border-color: {Colors.BORDER_LIGHT};
+                }}
+                QTabWidget::pane {{
+                    background-color: {Colors.BG_TERTIARY};
+                }}
+                QTabBar::tab {{
+                    background-color: {Colors.BG_TERTIARY};
+                    color: {Colors.TEXT_MUTED};
+                }}
+                QTabBar::tab:selected {{
+                    background-color: {Colors.BG_TERTIARY};
+                    color: {Colors.TEXT_MUTED};
+                }}
+            """)
 
     def _add_garment_image(self):
         """衣類画像を追加"""
@@ -436,10 +484,11 @@ class GenerationScreen(QWidget):
 
         if file_path:
             try:
-                # 衣類タイプを選択
-                clothing_type = self._select_clothing_type()
-                if not clothing_type:
+                # 衣類タイプと表裏を選択
+                result = self._select_clothing_type_and_side()
+                if not result:
                     return
+                clothing_type, side = result
 
                 # 衣類画像を分析
                 from core.vton.clothing_analyzer import ClothingAnalyzer
@@ -460,6 +509,7 @@ class GenerationScreen(QWidget):
                     clothing_type=clothing_type,
                     colors=features.get("colors", []),
                     analyzed_description=description,
+                    side=side,
                 )
                 self.garments.append(item)
 
@@ -472,17 +522,74 @@ class GenerationScreen(QWidget):
             except Exception as e:
                 QMessageBox.critical(self, "エラー", f"画像の読み込みに失敗しました:\n{e}")
 
-    def _select_clothing_type(self) -> Optional[str]:
-        """衣類タイプを選択"""
-        from PySide6.QtWidgets import QInputDialog
+    def _select_clothing_type_and_side(self) -> Optional[tuple]:
+        """衣類タイプと表裏を選択"""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox, QPushButton, QDialogButtonBox
 
-        # 日本語の選択肢
-        types_jp = ["トップス", "ボトムス", "アウター", "ワンピース", "アクセサリー"]
-        type_jp, ok = QInputDialog.getItem(
-            self, "衣類タイプを選択", "タイプ:", types_jp, 0, False
-        )
+        dialog = QDialog(self)
+        dialog.setWindowTitle("衣類情報を選択")
+        dialog.setMinimumWidth(300)
 
-        if not ok:
+        # ダイアログ全体のスタイル（黒文字）
+        dialog.setStyleSheet(f"""
+            QDialog {{
+                background-color: {Colors.BG_CARD};
+            }}
+            QLabel {{
+                color: {Colors.TEXT_PRIMARY};
+                font-size: {Fonts.SIZE_MD};
+            }}
+            QComboBox {{
+                color: {Colors.TEXT_PRIMARY};
+                background-color: {Colors.BG_INPUT};
+                border: 1px solid {Colors.BORDER_LIGHT};
+                border-radius: {BorderRadius.SM}px;
+                padding: 8px 12px;
+                min-height: 20px;
+            }}
+            QComboBox:hover {{
+                border-color: {Colors.PRIMARY};
+            }}
+            QComboBox::drop-down {{
+                border: none;
+                width: 24px;
+            }}
+            QComboBox QAbstractItemView {{
+                color: {Colors.TEXT_PRIMARY};
+                background-color: {Colors.BG_CARD};
+                selection-background-color: {Colors.PRIMARY};
+                selection-color: {Colors.TEXT_WHITE};
+                border: 1px solid {Colors.BORDER_LIGHT};
+            }}
+        """)
+
+        layout = QVBoxLayout(dialog)
+
+        # 衣類タイプ選択
+        type_layout = QHBoxLayout()
+        type_label = QLabel("タイプ:")
+        type_combo = QComboBox()
+        type_combo.addItems(["トップス", "ボトムス", "アウター", "ワンピース", "アクセサリー"])
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(type_combo)
+        layout.addLayout(type_layout)
+
+        # 表裏選択
+        side_layout = QHBoxLayout()
+        side_label = QLabel("表裏:")
+        side_combo = QComboBox()
+        side_combo.addItems(["表", "裏"])
+        side_layout.addWidget(side_label)
+        side_layout.addWidget(side_combo)
+        layout.addLayout(side_layout)
+
+        # ボタン
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        if dialog.exec() != QDialog.Accepted:
             return None
 
         # 日本語 → 英語に変換
@@ -493,8 +600,15 @@ class GenerationScreen(QWidget):
             "ワンピース": "ONE_PIECE",
             "アクセサリー": "ACCESSORY"
         }
+        side_map = {
+            "表": "front",
+            "裏": "back"
+        }
 
-        return type_map.get(type_jp, "TOP")
+        clothing_type = type_map.get(type_combo.currentText(), "TOP")
+        side = side_map.get(side_combo.currentText(), "front")
+
+        return (clothing_type, side)
 
     def _remove_garment(self, item: ClothingItem):
         """衣類を削除"""

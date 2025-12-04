@@ -123,21 +123,22 @@ class ChatRefinementService:
         adapter
     ) -> List[Image.Image]:
         """Geminiを使用して画像を編集
-        
+
         Args:
             base_image: 編集対象の画像
             instruction: ユーザーの指示
             changes: 変更内容
             adapter: Geminiアダプター
-        
+
         Returns:
             編集された画像のリスト
         """
-        import google.generativeai as genai
-        
+        from google import genai
+        from google.genai import types
+
         print(f"[Chat Refinement] Geminiで画像編集: {instruction}")
         print(f"[Chat Refinement] 元の画像サイズ: {base_image.size}")
-        
+
         try:
             # 画像をリサイズ（トークン数を削減）
             max_size = 1024
@@ -146,75 +147,70 @@ class ChatRefinementService:
                 new_size = tuple(int(dim * ratio) for dim in base_image.size)
                 base_image = base_image.resize(new_size, Image.Resampling.LANCZOS)
                 print(f"[Chat Refinement] リサイズ後: {base_image.size}")
-            
+
             # RGBに変換（PNG等の形式問題を回避）
             if base_image.mode != 'RGB':
                 base_image = base_image.convert('RGB')
                 print(f"[Chat Refinement] RGBに変換")
-            
-            # APIキーを設定
-            genai.configure(api_key=self.api_key)
-            
-            # 通常の画像生成と同じモデルを使用
-            model = genai.GenerativeModel(model_name="gemini-3-pro-image-preview")
-            
-            # プロンプトを構築
+
+            # 新しいSDK（google-genai）を使用
+            client = genai.Client(api_key=self.api_key)
+
+            # プロンプトを構築 - 元画像の維持を明確に指示
             edit_prompt = f"""
-Look at this image carefully.
+Make a minor edit to this photograph.
 
-This is a fashion photograph that needs to be edited.
+USER REQUEST: {instruction}
 
-USER INSTRUCTION: {instruction}
+STRICT REQUIREMENTS:
+1. Keep the EXACT same person (identical face and body)
+2. Keep the EXACT same outfit (same clothes, same style, same colors)
+3. Keep the EXACT same pose and body position
+4. Keep the EXACT same camera angle
+5. Apply ONLY the change requested above - nothing else
 
-YOUR TASK:
-Create a NEW version of this image with ONLY the following changes:
+Output the edited photograph.
 """
-            
-            # 変更内容を追加
-            for key, value in changes.items():
-                if key == "pose":
-                    edit_prompt += f"\n- Change the pose to: {value}"
-                elif key == "background":
-                    edit_prompt += f"\n- Change the background to: {value}"
-                elif key == "lighting":
-                    edit_prompt += f"\n- Adjust lighting: {value}"
-                elif key == "expression":
-                    edit_prompt += f"\n- Change expression: {value}"
-                elif key == "prompt_additions":
-                    edit_prompt += f"\n- {value}"
-            
-            edit_prompt += f"""
 
-IMPORTANT:
-- Keep the SAME PERSON (face, hair, body features)
-- Keep the SAME CLOTHING (unless specifically asked to change)
-- Only change what was requested
-- Keep everything else exactly as it is in the original image
-- Full body shot, professional photography
-"""
-            
-            # 画像とプロンプトを送信
-            prompt_parts = [base_image, edit_prompt]
-            
             print(f"[Chat Refinement] Gemini編集プロンプト: {edit_prompt[:200]}...")
-            
-            response = model.generate_content(prompt_parts)
-            
+
+            # 画像をバイト列に変換
+            from io import BytesIO
+            img_buffer = BytesIO()
+            base_image.save(img_buffer, format='PNG')
+            img_bytes = img_buffer.getvalue()
+
+            print(f"[Chat Refinement] Gemini APIを呼び出し中...")
+
+            # Gemini 3 Pro Imageで画像編集
+            response = client.models.generate_content(
+                model="gemini-2.0-flash-exp-image-generation",
+                contents=[
+                    types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+                    edit_prompt
+                ],
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"]
+                )
+            )
+
+            print(f"[Chat Refinement] Gemini APIレスポンス受信")
+
             # レスポンスから画像を取得
-            if hasattr(response, 'candidates') and response.candidates:
+            if response.candidates:
+                print(f"[Chat Refinement] candidates数: {len(response.candidates)}")
                 for candidate in response.candidates:
-                    if hasattr(candidate.content, 'parts'):
+                    if candidate.content and candidate.content.parts:
                         for part in candidate.content.parts:
-                            if hasattr(part, 'inline_data') and part.inline_data and part.inline_data.data:
-                                from io import BytesIO
-                                inline_data = part.inline_data
-                                edited_image = Image.open(BytesIO(inline_data.data))
+                            if part.inline_data and part.inline_data.data:
+                                edited_image = Image.open(BytesIO(part.inline_data.data))
                                 print(f"[Chat Refinement] 画像編集成功")
                                 return [edited_image]
-            
+
             print(f"[Chat Refinement] 画像が生成されませんでした")
+            print(f"[Chat Refinement] response: {response}")
             return []
-        
+
         except Exception as e:
             print(f"[Chat Refinement] Gemini編集エラー: {e}")
             import traceback

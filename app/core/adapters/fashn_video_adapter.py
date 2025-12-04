@@ -272,14 +272,18 @@ class FashnVideoAdapter:
 # テスト用
 if __name__ == "__main__":
     import sys
-    
-    # テスト用APIキー
-    TEST_API_KEY = "fa-uCRCpnOMl0uK-ylgH33BqyMDdtVyiEZ9SDRLo"
-    
+    import os
+
+    # テスト用APIキー（環境変数から取得）
+    TEST_API_KEY = os.environ.get("FASHN_API_KEY", "")
+    if not TEST_API_KEY:
+        print("環境変数 FASHN_API_KEY を設定してください")
+        sys.exit(1)
+
     print("=" * 70)
     print("FASHN Video Adapter テスト")
     print("=" * 70)
-    
+
     adapter = FashnVideoAdapter(TEST_API_KEY)
     
     # テスト画像を作成

@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QScrollArea,
     QPushButton,
-    QProgressBar,
 )
 from PySide6.QtCore import Qt, Signal
 from PIL import Image
@@ -29,7 +28,8 @@ class EditScreen(QWidget):
     refinement_requested = Signal(str, dict)  # 修正リクエスト
     video_regeneration_requested = Signal(Image.Image)  # 動画再生成リクエスト
     history_item_selected = Signal(int, list, dict)  # history_id, images, parameters
-    video_edit_requested = Signal(Image.Image, str)  # 動画修正リクエスト
+    video_edit_requested = Signal(Image.Image, str)  # 動画修正リクエスト（ギャラリーから）
+    video_refinement_requested = Signal(str, dict)  # 動画修正リクエスト（チャットから）
 
     def __init__(self, history_manager, parent=None):
         super().__init__(parent)
@@ -47,16 +47,6 @@ class EditScreen(QWidget):
         # 背景
         self.setStyleSheet(f"background-color: {Colors.BG_MAIN};")
 
-        # プログレスバー
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setMinimum(0)
-        self.progress_bar.setMaximum(100)
-        self.progress_bar.setStyleSheet(Styles.PROGRESS_BAR)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p%")
-        layout.addWidget(self.progress_bar)
-
         # メインスプリッター（3カラム）
         splitter = QSplitter(Qt.Horizontal)
         splitter.setStyleSheet(Styles.SPLITTER)
@@ -73,8 +63,8 @@ class EditScreen(QWidget):
         chat_group = self._create_chat_group()
         splitter.addWidget(chat_group)
 
-        # スプリッター幅設定
-        splitter.setSizes([280, 500, 320])
+        # スプリッター幅設定（チャット部分を広めに）
+        splitter.setSizes([250, 450, 400])
 
         layout.addWidget(splitter)
 
@@ -114,6 +104,7 @@ class EditScreen(QWidget):
         # ギャラリービュー
         self.gallery_view = GalleryView()
         self.gallery_view.image_selected.connect(self._on_gallery_image_selected)
+        self.gallery_view.video_edit_requested.connect(self._on_video_edit_requested)
 
         scroll_area.setWidget(self.gallery_view)
         layout.addWidget(scroll_area)
@@ -125,8 +116,8 @@ class EditScreen(QWidget):
         """チャット修正グループを作成"""
         group = QGroupBox("チャットで修正")
         group.setStyleSheet(Styles.GROUP_BOX)
-        group.setMinimumWidth(300)
-        group.setMaximumWidth(400)
+        group.setMinimumWidth(350)
+        # 最大幅の制限を削除してスプリッターで自由にリサイズ可能に
 
         layout = QVBoxLayout()
         layout.setContentsMargins(Spacing.MD, Spacing.LG, Spacing.MD, Spacing.MD)
@@ -134,6 +125,7 @@ class EditScreen(QWidget):
         # チャットウィジェット
         self.chat_widget = ChatRefinementWidget()
         self.chat_widget.refinement_requested.connect(self._on_refinement_requested)
+        self.chat_widget.video_refinement_requested.connect(self._on_video_refinement_requested)
         layout.addWidget(self.chat_widget)
 
         group.setLayout(layout)
@@ -163,8 +155,15 @@ class EditScreen(QWidget):
         self.video_regeneration_requested.emit(image)
 
     def _on_video_edit_requested(self, source_image: Image.Image, video_path: str):
-        """動画修正リクエストが発生した時"""
+        """動画修正リクエストが発生した時（ギャラリーから）"""
+        # チャットウィジェットに動画ソース画像を設定
+        self.set_video_source_image(source_image, video_path, self.current_metadata)
+        # MainWindowにも通知
         self.video_edit_requested.emit(source_image, video_path)
+
+    def _on_video_refinement_requested(self, instruction: str, context: dict):
+        """動画修正リクエストが発生した時（チャットから）"""
+        self.video_refinement_requested.emit(instruction, context)
 
     # ===== 公開メソッド =====
 
@@ -196,20 +195,23 @@ class EditScreen(QWidget):
         """修正完了時の処理"""
         self.chat_widget.on_refinement_completed(new_image, ai_response)
 
+    def on_video_refinement_completed(self, new_image: Image.Image, video_path: str, ai_response: str):
+        """動画修正完了時の処理"""
+        self.chat_widget.on_video_refinement_completed(new_image, video_path, ai_response)
+        # ギャラリーの動画も更新
+        self.gallery_view.set_video(video_path, new_image)
+
     def on_refinement_failed(self, error_message: str):
         """修正失敗時の処理"""
         self.chat_widget.on_refinement_failed(error_message)
 
     def set_progress(self, message: str, value: int):
-        """進捗を設定"""
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(value)
-        self.progress_bar.setFormat(f"{message} - %p%")
+        """進捗を設定（チャットウィジェット内のプログレスバーに表示）"""
+        self.chat_widget.set_progress(message, value)
 
     def hide_progress(self):
         """進捗を非表示"""
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setFormat("%p%")
+        self.chat_widget.hide_progress()
 
     def refresh_history(self):
         """履歴を更新"""

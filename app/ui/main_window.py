@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QFileDialog,
     QMessageBox,
-    QProgressBar,
     QGridLayout,
     QCheckBox,
     QStackedWidget,
@@ -23,6 +22,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 from PIL import Image
 import asyncio
+import sys
 
 from models.clothing_item import ClothingItem
 from models.model_attributes import ModelAttributes
@@ -235,7 +235,7 @@ class VideoGenerationWorker(QThread):
             # 進捗コールバック
             def progress_callback(step: str, percentage: int):
                 self.progress_updated.emit(percentage, step)
-            
+
             # 動画を生成
             video_url, metadata = self.adapter.generate_video(
                 image=self.image,
@@ -244,11 +244,11 @@ class VideoGenerationWorker(QThread):
                 prompt=self.settings.get("prompt"),
                 progress_callback=progress_callback
             )
-            
+
             # 動画をダウンロード
             progress_callback("動画をダウンロード中...", 90)
             success = self.adapter.download_video(video_url, self.output_path)
-            
+
             if success:
                 self.video_generated.emit(self.output_path, metadata)
             else:
@@ -256,6 +256,94 @@ class VideoGenerationWorker(QThread):
 
         except Exception as e:
             self.video_generation_failed.emit(str(e))
+
+
+class VideoRefinementWorker(QThread):
+    """動画修正処理ワーカースレッド（画像修正 → 動画再生成）"""
+
+    progress_updated = Signal(int, str)
+    refinement_completed = Signal(Image.Image, str, str)  # 修正後画像, 動画パス, AI応答
+    refinement_failed = Signal(str)
+
+    def __init__(self, chat_service, instruction, generate_service, video_adapter,
+                 garments, model_attrs, config, conversation_history,
+                 source_image, video_settings, output_path):
+        super().__init__()
+        self.chat_service = chat_service
+        self.instruction = instruction
+        self.generate_service = generate_service
+        self.video_adapter = video_adapter
+        self.garments = garments
+        self.model_attrs = model_attrs
+        self.config = config
+        self.conversation_history = conversation_history
+        self.source_image = source_image
+        self.video_settings = video_settings
+        self.output_path = output_path
+
+    def run(self):
+        """バックグラウンドで実行"""
+        try:
+            import asyncio
+
+            # 進捗コールバック
+            def progress_callback(step: str, percentage: int):
+                self.progress_updated.emit(percentage, step)
+
+            # asyncioイベントループを実行
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            # サービスに進捗コールバックを渡す
+            self.generate_service.progress_callback = progress_callback
+
+            # Step 1: 画像を修正
+            progress_callback("元画像を修正中...", 10)
+            images, ai_response, metadata = loop.run_until_complete(
+                self.chat_service.refine_image(
+                    self.instruction,
+                    self.generate_service,
+                    self.garments,
+                    self.model_attrs,
+                    self.config,
+                    self.conversation_history,
+                    self.source_image,
+                    progress_callback
+                )
+            )
+
+            if not images or len(images) == 0:
+                self.refinement_failed.emit("画像の修正に失敗しました")
+                return
+
+            refined_image = images[0]
+            progress_callback("画像修正完了、動画を再生成中...", 50)
+
+            # Step 2: 修正後の画像から動画を再生成
+            video_url, video_metadata = self.video_adapter.generate_video(
+                image=refined_image,
+                duration=self.video_settings["duration"],
+                resolution=self.video_settings["resolution"],
+                prompt=self.video_settings.get("prompt"),
+                progress_callback=lambda step, pct: progress_callback(step, 50 + pct // 2)
+            )
+
+            # 動画をダウンロード
+            progress_callback("動画をダウンロード中...", 95)
+            success = self.video_adapter.download_video(video_url, self.output_path)
+
+            if success:
+                final_response = f"{ai_response}\n\n動画も再生成しました。"
+                self.refinement_completed.emit(refined_image, self.output_path, final_response)
+            else:
+                self.refinement_failed.emit("動画のダウンロードに失敗しました")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.refinement_failed.emit(str(e))
+        finally:
+            loop.close()
 
 
 class FashnTryonWorker(QThread):
@@ -316,8 +404,10 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1400, 900)
         self.resize(1600, 1000)  # 起動時のサイズを大きく
 
-        # ウィンドウアイコンを設定
-        icon_path = Path(__file__).parent.parent / "assets" / "icons" / "icon.png"
+        # ウィンドウアイコンを設定（ICOファイルを優先）
+        icon_path = self._get_asset_path("assets/icons/icon.ico")
+        if not icon_path.exists():
+            icon_path = self._get_asset_path("assets/icons/icon.png")
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
 
@@ -355,8 +445,8 @@ class MainWindow(QMainWindow):
         # UIを構築
         self._setup_ui()
 
-        # APIキーの確認
-        self._check_api_keys()
+        # APIキーの確認（未設定なら設定画面を表示）
+        self._check_and_show_api_key_setup()
 
     def _setup_ui(self):
         """UIをセットアップ - マルチページアーキテクチャ"""
@@ -381,15 +471,6 @@ class MainWindow(QMainWindow):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
 
-        # グローバルプログレスバー
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFormat("%p%")
-        self.progress_bar.setFixedHeight(6)
-        self.progress_bar.setStyleSheet(Styles.PROGRESS_BAR)
-        content_layout.addWidget(self.progress_bar)
-
         # スタックウィジェット（画面切り替え用）
         self.content_stack = QStackedWidget()
 
@@ -401,32 +482,40 @@ class MainWindow(QMainWindow):
 
     def _create_screens(self):
         """各画面を作成・設定"""
-        # ホーム画面 (index 0)
+        # APIキー設定画面 (index 0)
+        from ui.screens.api_key_setup_screen import APIKeySetupScreen
+        self.api_key_setup_screen = APIKeySetupScreen(self.api_key_manager)
+        self.api_key_setup_screen.setup_completed.connect(self._on_api_key_setup_completed)
+        self.content_stack.addWidget(self.api_key_setup_screen)
+
+        # ホーム画面 (index 1)
         self.home_screen = HomeScreen()
         self.home_screen.navigate_to_generation.connect(lambda: self._navigate_to("generation"))
         self.home_screen.navigate_to_edit.connect(lambda: self._navigate_to("edit"))
         self.content_stack.addWidget(self.home_screen)
 
-        # 生成画面 (index 1)
+        # 生成画面 (index 2)
         self.generation_screen = GenerationScreen()
         self.generation_screen.generation_requested.connect(self._on_generation_requested_from_screen)
         self.generation_screen.reference_person_changed.connect(self._on_reference_person_changed_from_screen)
         self.content_stack.addWidget(self.generation_screen)
 
-        # 編集画面 (index 2)
+        # 編集画面 (index 3)
         self.edit_screen = EditScreen(self.history_manager)
         self.edit_screen.refinement_requested.connect(self._on_refinement_requested)
         self.edit_screen.history_item_selected.connect(self._on_history_selected_from_screen)
         self.edit_screen.image_selected.connect(self._on_gallery_image_selected_from_screen)
         self.edit_screen.video_regeneration_requested.connect(self._on_video_regeneration_requested_from_screen)
+        self.edit_screen.video_refinement_requested.connect(self._on_video_refinement_requested)
         self.content_stack.addWidget(self.edit_screen)
 
     def _navigate_to(self, screen_name: str):
         """指定した画面に遷移"""
-        screen_map = {"home": 0, "generation": 1, "edit": 2}
-        index = screen_map.get(screen_name, 0)
+        screen_map = {"api_key_setup": 0, "home": 1, "generation": 2, "edit": 3}
+        index = screen_map.get(screen_name, 1)
         self.content_stack.setCurrentIndex(index)
-        self.side_menu.set_current_screen(screen_name)
+        if screen_name != "api_key_setup":
+            self.side_menu.set_current_screen(screen_name)
 
     def _on_screen_changed(self, screen_name: str):
         """サイドメニューからの画面変更"""
@@ -572,8 +661,8 @@ class MainWindow(QMainWindow):
         # FASHN APIキーを取得
         fashn_key = self.api_key_manager.load_api_key("fashn")
         if not fashn_key:
-            fashn_key = "fa-uCRCpnOMl0uK-ylgH33BqyMDdtVyiEZ9SDRLo"
-            print("[MainWindow] デフォルトFASHN APIキーを使用")
+            QMessageBox.warning(self, "エラー", "FASHN APIキーが設定されていません")
+            return
 
         from core.adapters.fashn_tryon_adapter import FashnTryonAdapter
         tryon_adapter = FashnTryonAdapter(fashn_key)
@@ -608,8 +697,6 @@ class MainWindow(QMainWindow):
 
         # UIを更新
         self.generation_screen.set_generating(True)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
 
         self.tryon_worker.start()
 
@@ -658,8 +745,6 @@ class MainWindow(QMainWindow):
 
         # UIを更新
         self.generation_screen.set_generating(True)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
 
         self.worker.start()
 
@@ -1049,25 +1134,25 @@ class MainWindow(QMainWindow):
         # Gemini APIキーを取得
         gemini_key = self.api_key_manager.load_api_key("gemini")
         if not gemini_key:
-            self.chat_widget.on_refinement_failed("Gemini APIキーが設定されていません")
+            self.edit_screen.on_refinement_failed("Gemini APIキーが設定されていません")
             return
-        
+
         # ChatRefinementServiceを作成
         chat_service = ChatRefinementService(gemini_key)
-        
+
         # パラメータを復元
         params = context.get("params", {})
         print(f"[Chat Refinement] params keys: {params.keys() if params else 'None'}")
         print(f"[Chat Refinement] params: {params}")
-        
+
         if not params:
-            self.chat_widget.on_refinement_failed("パラメータが見つかりません")
+            self.edit_screen.on_refinement_failed("パラメータが見つかりません")
             return
-        
+
         # model_attrsがあるか確認
         if "model_attrs" not in params:
             print(f"[Chat Refinement] WARNING: model_attrs が params に存在しません")
-            self.chat_widget.on_refinement_failed("モデル属性が見つかりません")
+            self.edit_screen.on_refinement_failed("モデル属性が見つかりません")
             return
         
         # ModelAttributesを再構築
@@ -1103,7 +1188,7 @@ class MainWindow(QMainWindow):
         # Geminiアダプタを作成
         adapter = self._create_adapter("gemini")
         if not adapter:
-            self.chat_widget.on_refinement_failed("Geminiアダプタの作成に失敗しました")
+            self.edit_screen.on_refinement_failed("Geminiアダプタの作成に失敗しました")
             return
         
         # GenerateServiceを作成
@@ -1128,19 +1213,23 @@ class MainWindow(QMainWindow):
             conversation_history,
             selected_image  # 選択画像を渡す
         )
-        self.chat_worker.progress_updated.connect(self._update_progress)
+        self.chat_worker.progress_updated.connect(self._update_chat_refinement_progress)
         self.chat_worker.refinement_completed.connect(self._on_chat_refinement_completed)
         self.chat_worker.refinement_failed.connect(self._on_chat_refinement_failed)
-        
-        # 進捗バーを表示
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-        
+
+        # プログレスバーを表示
+        self.edit_screen.set_progress("画像を編集中...", 0)
+        self.statusBar().showMessage("画像を編集しています...", 0)
+
         self.chat_worker.start()
-    
+
+    def _update_chat_refinement_progress(self, percentage: int, message: str):
+        """チャット修正の進捗を更新"""
+        self.edit_screen.set_progress(message, percentage)
+        self.statusBar().showMessage(message)
+
     def _on_chat_refinement_completed(self, new_image: Image.Image, ai_response: str):
         """チャット修正完了時の処理"""
-        self.progress_bar.setVisible(False)
         self.edit_screen.hide_progress()
 
         # EditScreenに通知（チャットウィジェットに内部で転送）
@@ -1190,23 +1279,165 @@ class MainWindow(QMainWindow):
     
     def _on_chat_refinement_failed(self, error_message: str):
         """チャット修正失敗時の処理"""
-        self.progress_bar.setVisible(False)
-        self.chat_widget.on_refinement_failed(error_message)
+        self.edit_screen.hide_progress()
+        self.edit_screen.on_refinement_failed(error_message)
         self.statusBar().showMessage(f"修正に失敗: {error_message}", 5000)
-    
+
+    def _on_video_refinement_requested(self, instruction: str, context: Dict):
+        """動画修正が要求された時（チャットから）"""
+        print(f"[Video Refinement] 動画修正要求: {instruction}")
+
+        from core.pipeline.chat_refinement_service import ChatRefinementService
+
+        # Gemini APIキーを取得
+        gemini_key = self.api_key_manager.load_api_key("gemini")
+        if not gemini_key:
+            self.edit_screen.on_refinement_failed("Gemini APIキーが設定されていません")
+            return
+
+        # FASHN APIキーを取得
+        fashn_key = self.api_key_manager.load_api_key("fashn")
+        if not fashn_key:
+            self.edit_screen.on_refinement_failed("FASHN APIキーが設定されていません")
+            return
+
+        # ChatRefinementServiceを作成
+        chat_service = ChatRefinementService(gemini_key)
+
+        # パラメータを復元
+        params = context.get("params", {})
+        if not params:
+            self.edit_screen.on_refinement_failed("パラメータが見つかりません")
+            return
+
+        # ModelAttributesを再構築
+        gender_map = {"女性": "female", "男性": "male"}
+        age_map = {"10代": "10s", "20代": "20s", "30代": "30s", "40代": "40s", "50代以上": "50s+"}
+        ethnicity_map = {
+            "アジア": "asian", "ヨーロッパ": "european", "アフリカ": "african",
+            "南北アメリカ": "american", "オセアニア": "oceanian", "混合": "mixed"
+        }
+        body_type_map = {"スリム": "slim", "標準": "standard", "アスリート": "athletic", "ぽっちゃり": "plus-size"}
+
+        model_attrs_dict = params.get("model_attrs", {})
+        model_attrs = ModelAttributes(
+            gender=gender_map.get(model_attrs_dict.get("gender", "女性"), "female"),
+            age_range=age_map.get(model_attrs_dict.get("age_range", "20代"), "20s"),
+            ethnicity=ethnicity_map.get(model_attrs_dict.get("ethnicity", "アジア"), "asian"),
+            body_type=body_type_map.get(model_attrs_dict.get("body_type", "標準"), "standard"),
+            height="standard",
+            pose=model_attrs_dict.get("pose", "front"),
+            background=model_attrs_dict.get("background", "white"),
+            custom_description=f"Pose: {model_attrs_dict.get('pose_description', '')}. Background: {model_attrs_dict.get('background_description', '')}"
+        )
+
+        # GenerationConfigを再構築
+        config_dict = params.get("config", {})
+        config = GenerationConfig(
+            provider="gemini",
+            quality="standard",
+            size=config_dict.get("size", "1024x1024"),
+            num_outputs=1
+        )
+
+        # Geminiアダプタを作成
+        adapter = self._create_adapter("gemini")
+        if not adapter:
+            self.edit_screen.on_refinement_failed("Geminiアダプタの作成に失敗しました")
+            return
+
+        # GenerateServiceを作成
+        from core.vton.fidelity_check import FidelityChecker
+        fidelity_checker = FidelityChecker()
+        generate_service = GenerateService(adapter, fidelity_checker)
+
+        # FashnVideoAdapterを作成
+        from core.adapters.fashn_video_adapter import FashnVideoAdapter
+        video_adapter = FashnVideoAdapter(fashn_key)
+
+        # 会話履歴を取得
+        conversation_history = context.get("history", [])
+
+        # 動画ソース画像を取得
+        source_image = context.get("video_source_image")
+        if not source_image:
+            self.edit_screen.on_refinement_failed("動画のソース画像が見つかりません")
+            return
+
+        # 動画設定
+        video_settings = {
+            "duration": 10,
+            "resolution": "1080p",
+            "prompt": "fashion model rotating 360 degrees and striking elegant poses"
+        }
+
+        # 一時保存先を決定
+        from datetime import datetime
+        output_filename = f"video_refined_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        temp_dir = Path.home() / "AppData" / "Local" / "VirtualFashionTryOn" / "videos"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        output_path = str(temp_dir / output_filename)
+
+        # ワーカースレッドで実行
+        self.video_refinement_worker = VideoRefinementWorker(
+            chat_service,
+            instruction,
+            generate_service,
+            video_adapter,
+            params.get("garments", self.garments),
+            model_attrs,
+            config,
+            conversation_history,
+            source_image,
+            video_settings,
+            output_path
+        )
+        self.video_refinement_worker.progress_updated.connect(self._update_video_refinement_progress)
+        self.video_refinement_worker.refinement_completed.connect(self._on_video_refinement_completed)
+        self.video_refinement_worker.refinement_failed.connect(self._on_video_refinement_failed)
+
+        self.edit_screen.set_progress("動画修正を開始中...", 0)
+        self.statusBar().showMessage("動画を修正しています...", 0)
+
+        self.video_refinement_worker.start()
+
+    def _update_video_refinement_progress(self, percentage: int, message: str):
+        """動画修正の進捗を更新"""
+        self.edit_screen.set_progress(message, percentage)
+        self.statusBar().showMessage(message)
+
+    def _on_video_refinement_completed(self, new_image: Image.Image, video_path: str, ai_response: str):
+        """動画修正完了時の処理"""
+        self.edit_screen.hide_progress()
+
+        # EditScreenに通知
+        self.edit_screen.on_video_refinement_completed(new_image, video_path, ai_response)
+
+        self.statusBar().showMessage("動画を修正しました！", 5000)
+        print(f"[Video Refinement] 動画修正完了: {video_path}")
+
+    def _on_video_refinement_failed(self, error_message: str):
+        """動画修正失敗時の処理"""
+        self.edit_screen.hide_progress()
+        self.edit_screen.on_refinement_failed(error_message)
+        self.statusBar().showMessage(f"動画修正に失敗: {error_message}", 5000)
+        print(f"[Video Refinement] 動画修正失敗: {error_message}")
+
     def _on_video_generation_requested(self, image: Image.Image, settings: Dict):
         """動画生成が要求された時"""
         print(f"[Video] 動画生成要求")
         print(f"  duration: {settings['duration']}秒")
         print(f"  resolution: {settings['resolution']}")
+
+        # ソース画像を保存（動画修正機能用）
+        self.video_source_image = image
         
         # FASHN APIキーを取得
         fashn_key = self.api_key_manager.load_api_key("fashn")
         if not fashn_key:
-            # デフォルトキーを使用
-            fashn_key = "fa-uCRCpnOMl0uK-ylgH33BqyMDdtVyiEZ9SDRLo"
-            print("[Video] デフォルトFASHN APIキーを使用")
-        
+            QMessageBox.warning(self, "エラー", "FASHN APIキーが設定されていません")
+            return
+
         # FashnVideoAdapterを作成
         from core.adapters.fashn_video_adapter import FashnVideoAdapter
         adapter = FashnVideoAdapter(fashn_key)
@@ -1229,30 +1460,24 @@ class MainWindow(QMainWindow):
         self.video_worker.video_generated.connect(self._on_video_generated)
         self.video_worker.video_generation_failed.connect(self._on_video_generation_failed)
         
-        # 進捗バーを表示（動画生成中の文言を設定）
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setFormat("動画生成中... %p%")
         self.statusBar().showMessage("動画を生成しています...", 0)
-        
+
         self.video_worker.start()
-    
+
     def _on_video_generated(self, video_path: str, metadata: Dict):
         """動画生成完了時の処理"""
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setFormat("%p%")  # フォーマットを元に戻す
-        
-        # ギャラリーに動画プレビューを設定
-        self.gallery_view.set_video(video_path)
-        
+        # ソース画像を取得（動画修正機能用）
+        source_image = getattr(self, 'video_source_image', None)
+
+        # EditScreenのギャラリーに動画プレビューを設定
+        self.edit_screen.set_video(video_path, source_image)
+
         self.statusBar().showMessage("動画を生成しました！生成結果欄で再生・保存できます。", 5000)
-        
+
         print(f"[Video] 動画生成完了: {video_path}")
-    
+
     def _on_video_generation_failed(self, error_message: str):
         """動画生成失敗時の処理"""
-        self.progress_bar.setVisible(False)
-        
         QMessageBox.critical(self, "エラー", f"動画生成に失敗しました:\n{error_message}")
         
         print(f"[Video] 動画生成失敗: {error_message}")
@@ -1429,10 +1654,9 @@ class MainWindow(QMainWindow):
             # FASHN APIキーを取得
             fashn_key = self.api_key_manager.load_api_key("fashn")
             if not fashn_key:
-                # デフォルトキー
-                fashn_key = "fa-uCRCpnOMl0uK-ylgH33BqyMDdtVyiEZ9SDRLo"
-                print("[MainWindow] デフォルトFASHN APIキーを使用")
-            
+                QMessageBox.warning(self, "エラー", "FASHN APIキーが設定されていません")
+                return
+
             # FASHN Try-Onアダプターを作成
             from core.adapters.fashn_tryon_adapter import FashnTryonAdapter
             tryon_adapter = FashnTryonAdapter(fashn_key)
@@ -1469,9 +1693,7 @@ class MainWindow(QMainWindow):
             
             # UIを更新
             self.generate_btn.setEnabled(False)
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(0)
-            
+
             self.tryon_worker.start()
         else:
             # 通常のGemini生成
@@ -1500,8 +1722,6 @@ class MainWindow(QMainWindow):
 
             # UIを更新
             self.generate_btn.setEnabled(False)
-            self.progress_bar.setVisible(True)
-            self.progress_bar.setValue(0)
 
             self.worker.start()
     
@@ -1534,9 +1754,7 @@ class MainWindow(QMainWindow):
         
         # UIを更新
         self.generate_btn.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(0)
-        
+
         self.worker.start()
 
     def _create_adapter(self, provider: str):
@@ -1559,12 +1777,12 @@ class MainWindow(QMainWindow):
 
     def _update_progress(self, percentage: int, message: str):
         """進捗を更新"""
-        self.progress_bar.setValue(percentage)
         self.statusBar().showMessage(message)
+        # 生成画面のインラインプログレスバーも更新
+        self.generation_screen.set_progress(message, percentage)
 
     def _on_generation_completed(self, images, metadata):
         """生成完了時の処理"""
-        self.progress_bar.setVisible(False)
         self.generation_screen.set_generating(False)
         self.statusBar().showMessage(f"{len(images)}枚の画像を生成しました", 3000)
 
@@ -1579,7 +1797,6 @@ class MainWindow(QMainWindow):
 
     def _on_generation_failed(self, error_message: str):
         """生成失敗時の処理"""
-        self.progress_bar.setVisible(False)
         self.generation_screen.set_generating(False)
         QMessageBox.critical(self, "エラー", f"画像生成に失敗しました:\n{error_message}")
 
@@ -1884,28 +2101,26 @@ Powered by:
 """
         QMessageBox.about(self, "バージョン情報", about_text)
     
-    def _check_api_keys(self):
-        """APIキーの確認"""
-        # Gemini APIキーが設定されているか確認
+    def _check_and_show_api_key_setup(self):
+        """APIキーの確認（未設定なら設定画面を表示）"""
         gemini_key = self.api_key_manager.load_api_key("gemini")
-        
-        if not gemini_key:
-            # Gemini APIキーが未設定の場合、設定を促す
-            reply = QMessageBox.question(
-                self,
-                "Gemini APIキー設定",
-                "Gemini APIキーが設定されていません。\n"
-                "画像生成にはGemini APIキーが必要です。\n\n"
-                "今すぐAPIキーを設定しますか？\n\n"
-                "※Google AI Studioで無料でAPIキーを取得できます。\n"
-                "https://aistudio.google.com/app/apikey",
-                QMessageBox.Yes | QMessageBox.No,
-            )
-            
-            if reply == QMessageBox.Yes:
-                # 設定ダイアログを開く
-                self._open_api_key_dialog()
-        # APIキーが設定済みの場合は何もしない
+        fashn_key = self.api_key_manager.load_api_key("fashn")
+
+        if not gemini_key or not fashn_key:
+            # APIキーが未設定の場合、設定画面を表示
+            self._navigate_to("api_key_setup")
+            # サイドメニューを非表示
+            self.side_menu.setVisible(False)
+        else:
+            # 設定済みの場合はホーム画面を表示
+            self._navigate_to("home")
+
+    def _on_api_key_setup_completed(self):
+        """APIキー設定完了時の処理"""
+        # サイドメニューを表示
+        self.side_menu.setVisible(True)
+        # ホーム画面に遷移
+        self._navigate_to("home")
 
     def _show_info_dialog(self):
         """情報ダイアログを表示"""
@@ -1920,4 +2135,14 @@ Powered by:
 
         dialog = APIKeyDialog(self.api_key_manager, self)
         dialog.exec()
+
+    def _get_asset_path(self, relative_path: str) -> Path:
+        """PyInstallerでパッケージ化された場合とそうでない場合の両方でアセットパスを取得"""
+        if getattr(sys, 'frozen', False):
+            # PyInstallerでパッケージ化された場合
+            base_path = Path(sys._MEIPASS)
+        else:
+            # 通常の実行の場合
+            base_path = Path(__file__).parent.parent
+        return base_path / relative_path
 

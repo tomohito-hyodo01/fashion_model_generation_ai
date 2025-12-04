@@ -39,6 +39,7 @@ $buildArgs = @(
     "--name=VirtualFashionTryOn",
     "--windowed",
     "--onefile",
+    "--icon=app/assets/icons/icon.ico",
     "--add-data=app/assets;assets",
     "--hidden-import=PySide6",
     "--hidden-import=PySide6.QtCore",

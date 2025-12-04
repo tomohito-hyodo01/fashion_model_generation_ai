@@ -36,11 +36,15 @@ class PromptGenerator:
         # 3. 衣類の詳細描写
         clothing_desc = self._generate_clothing_description(clothing_items)
 
+        # 衣類フィット指示
+        fit_instruction = self._generate_fit_instruction()
+
         # 最終プロンプト構築（明確に人物を生成するよう指示）
         prompt = (
             f"GENERATE A PHOTOGRAPH OF: {model_desc}. "
             f"COMPOSITION: {photo_style}. "
             f"OUTFIT: {clothing_desc}. "
+            f"CLOTHING FIT: {fit_instruction}. "
             f"IMPORTANT: This must show a REAL HUMAN PERSON wearing clothing, NOT just the clothing item alone."
         )
 
@@ -58,8 +62,9 @@ class PromptGenerator:
         if not items:
             return "A professional fashion model in a full body photo"
 
-        # 衣類タイプを取得
+        # 衣類タイプと表裏を取得
         clothing_type_desc = []
+        has_back_view = False
         for item in items:
             type_map = {
                 "TOP": "a top/shirt",
@@ -68,16 +73,37 @@ class PromptGenerator:
                 "ONE_PIECE": "a dress/outfit",
                 "ACCESSORY": "accessories"
             }
-            clothing_type_desc.append(type_map.get(item.clothing_type, "clothing"))
-        
+            base_desc = type_map.get(item.clothing_type, "clothing")
+
+            # 表裏の情報を追加
+            if item.side == "back":
+                has_back_view = True
+                clothing_type_desc.append(f"{base_desc} (showing back view)")
+            else:
+                clothing_type_desc.append(base_desc)
+
         # プロンプト構築：人物を最優先に記述
         desc = f"A professional fashion model wearing {' and '.join(clothing_type_desc)} with colors and patterns from the reference image"
-        
+
+        # 裏面の衣類がある場合、モデルの向きを指定
+        if has_back_view:
+            desc += ". The model is showing their back to the camera to display the back of the clothing"
+
         return desc
 
     def _generate_photography_style(self, config: GenerationConfig) -> str:
         """撮影スタイルの生成"""
         return "full body portrait showing entire person from head to feet, professional studio photograph, even lighting, plain white background"
+
+    def _generate_fit_instruction(self) -> str:
+        """衣類フィット指示の生成"""
+        return (
+            "The clothing must fit naturally and snugly on the model's body, "
+            "following the body contours perfectly. "
+            "Natural fabric draping with realistic wrinkles and folds. "
+            "No floating or loose-fitting appearance. "
+            "The garment should look like it was tailored for the model"
+        )
 
     def _generate_negative_prompt(self) -> str:
         """ネガティブプロンプトの生成（Stability AI用）"""
@@ -88,6 +114,9 @@ class PromptGenerator:
             "cropped body, partial body, upper body only, portrait, headshot, close-up, "
             "cut off feet, cut off head, cut off legs, "
             "painting, illustration, drawing, anime, cartoon, 3D render, "
-            "blur, low quality, distorted, deformed, bad anatomy"
+            "blur, low quality, distorted, deformed, bad anatomy, "
+            "floating clothing, loose fitting, baggy, oversized, ill-fitting clothes, "
+            "clothing not touching body, air under clothing, puffy clothing, "
+            "wrinkled mess, unnatural folds, stiff fabric"
         )
 

@@ -17,6 +17,7 @@ class ClothingItem:
     analyzed_description: str = ""  # 詳細な英語描写
     mask_path: Optional[str] = None  # セグメンテーションマスク
     fingerprint: Optional[dict] = None  # 色・柄フィンガープリント
+    side: str = "front"  # front/back (表/裏)
 
     def __post_init__(self):
         """バリデーション"""
@@ -30,10 +31,18 @@ class ClothingItem:
                 f"Must be one of {valid_types}"
             )
 
+        valid_sides = ["front", "back"]
+        if self.side not in valid_sides:
+            raise ValueError(
+                f"Invalid side: {self.side}. "
+                f"Must be one of {valid_sides}"
+            )
+
     @property
     def display_name(self) -> str:
         """表示用の名前"""
-        return f"{self.clothing_type}: {Path(self.image_path).name}"
+        side_jp = "表" if self.side == "front" else "裏"
+        return f"{self.clothing_type}({side_jp}): {Path(self.image_path).name}"
 
     def to_dict(self) -> dict:
         """辞書形式に変換"""
@@ -46,6 +55,7 @@ class ClothingItem:
             "analyzed_description": self.analyzed_description,
             "mask_path": self.mask_path,
             "fingerprint": self.fingerprint,
+            "side": self.side,
         }
 
 
