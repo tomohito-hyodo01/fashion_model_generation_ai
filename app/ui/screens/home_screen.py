@@ -211,19 +211,6 @@ class HomeScreen(QWidget):
         # 下部スペーサー
         layout.addStretch(2)
 
-        # フッター
-        footer = QLabel("Powered by Gemini AI")
-        footer.setAlignment(Qt.AlignCenter)
-        footer.setStyleSheet(f"""
-            QLabel {{
-                color: {Colors.TEXT_MUTED};
-                font-size: {Fonts.SIZE_XS};
-                background: transparent;
-                border: none;
-            }}
-        """)
-        layout.addWidget(footer)
-
     def update_styles(self):
         """テーマ変更時にスタイルを更新"""
         self.setStyleSheet(f"""

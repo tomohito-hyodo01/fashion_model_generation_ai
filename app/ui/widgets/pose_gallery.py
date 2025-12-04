@@ -16,6 +16,8 @@ from PySide6.QtGui import QPixmap, QIcon
 from pathlib import Path
 from typing import Dict, Optional
 
+from ui.styles import Styles
+
 
 class PoseGalleryWidget(QWidget):
     """ポーズギャラリーウィジェット
@@ -125,27 +127,17 @@ class PoseGalleryWidget(QWidget):
                 btn.setChecked(True)
         
         layout.addLayout(grid_layout)
-        
-        # 統一デザインのボタンスタイル
-        BUTTON_STYLE = """
-            QPushButton {
-                background-color: #3498db;
-                color: white;
-                font-weight: bold;
-                border-radius: 5px;
-                padding: 8px 16px;
-            }
-            QPushButton:hover {
-                background-color: #2980b9;
-            }
-        """
-        
-        # カスタムポーズアップロードボタン
+
+        layout.addSpacing(10)
+
+        # カスタムポーズアップロードボタン（統一デザイン）
         custom_btn = QPushButton("カスタムポーズ画像をアップロード")
-        custom_btn.setStyleSheet(BUTTON_STYLE)
+        custom_btn.setStyleSheet(Styles.BUTTON_PRIMARY)
+        custom_btn.setMinimumHeight(40)
+        custom_btn.setCursor(Qt.PointingHandCursor)
         custom_btn.clicked.connect(self._upload_custom_pose)
         layout.addWidget(custom_btn)
-        
+
         layout.addStretch()
     
     def _create_pose_button(self, pose_id: str, pose_info: Dict[str, str]) -> QToolButton:

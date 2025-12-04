@@ -16,13 +16,14 @@ from ui.styles import Styles, Colors, Fonts, Spacing, BorderRadius
 
 
 class APIKeySetupScreen(QWidget):
-    """APIキー設定画面（初回起動時に表示）"""
+    """APIキー設定画面（初回起動時・設定変更時に表示）"""
 
     setup_completed = Signal()  # 設定完了時に発火
 
     def __init__(self, api_key_manager, parent=None):
         super().__init__(parent)
         self.api_key_manager = api_key_manager
+        self.is_initial_setup = True  # 初回設定かどうか
         self._setup_ui()
 
     def _setup_ui(self):
@@ -47,29 +48,29 @@ class APIKeySetupScreen(QWidget):
         container_layout.setSpacing(Spacing.LG)
 
         # タイトル
-        title = QLabel("APIキーの設定")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet(f"""
+        self.title_label = QLabel("APIキーの設定")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.title_label.setStyleSheet(f"""
             font-size: 24px;
             font-weight: 700;
             color: {Colors.TEXT_PRIMARY};
             padding-bottom: {Spacing.SM}px;
         """)
-        container_layout.addWidget(title)
+        container_layout.addWidget(self.title_label)
 
         # 説明
-        description = QLabel(
+        self.description_label = QLabel(
             "このアプリケーションを使用するには、以下のAPIキーが必要です。\n"
             "各サービスのウェブサイトでAPIキーを取得してください。"
         )
-        description.setAlignment(Qt.AlignCenter)
-        description.setWordWrap(True)
-        description.setStyleSheet(f"""
+        self.description_label.setAlignment(Qt.AlignCenter)
+        self.description_label.setWordWrap(True)
+        self.description_label.setStyleSheet(f"""
             font-size: {Fonts.SIZE_MD};
             color: {Colors.TEXT_SECONDARY};
             padding-bottom: {Spacing.MD}px;
         """)
-        container_layout.addWidget(description)
+        container_layout.addWidget(self.description_label)
 
         # Gemini API キー入力
         gemini_section = self._create_api_key_section(
@@ -157,19 +158,26 @@ class APIKeySetupScreen(QWidget):
         gemini_key = self.gemini_input.text().strip()
         fashn_key = self.fashn_input.text().strip()
 
-        # バリデーション
-        if not gemini_key:
-            self._show_error("Gemini APIキーを入力してください")
-            return
-
-        if not fashn_key:
-            self._show_error("FASHN APIキーを入力してください")
-            return
+        # 初回設定時は両方必須
+        if self.is_initial_setup:
+            if not gemini_key:
+                self._show_error("Gemini APIキーを入力してください")
+                return
+            if not fashn_key:
+                self._show_error("FASHN APIキーを入力してください")
+                return
+        else:
+            # 更新時は入力があるものだけ更新
+            if not gemini_key and not fashn_key:
+                self._show_error("少なくとも1つのAPIキーを入力してください")
+                return
 
         # APIキーを保存
         try:
-            self.api_key_manager.save_api_key("gemini", gemini_key)
-            self.api_key_manager.save_api_key("fashn", fashn_key)
+            if gemini_key:
+                self.api_key_manager.save_api_key("gemini", gemini_key)
+            if fashn_key:
+                self.api_key_manager.save_api_key("fashn", fashn_key)
 
             # 設定完了シグナルを発火
             self.setup_completed.emit()
@@ -185,3 +193,38 @@ class APIKeySetupScreen(QWidget):
     def _hide_error(self):
         """エラーメッセージを非表示"""
         self.error_label.setVisible(False)
+
+    def set_mode(self, is_initial: bool):
+        """表示モードを設定（初回設定 / 設定変更）"""
+        self.is_initial_setup = is_initial
+        self._hide_error()
+
+        # 入力フィールドをクリア
+        self.gemini_input.clear()
+        self.fashn_input.clear()
+
+        if is_initial:
+            self.title_label.setText("APIキーの設定")
+            self.description_label.setText(
+                "このアプリケーションを使用するには、以下のAPIキーが必要です。\n"
+                "各サービスのウェブサイトでAPIキーを取得してください。"
+            )
+            self.complete_btn.setText("設定を完了して開始")
+            self.gemini_input.setPlaceholderText("Gemini API キーを入力...")
+            self.fashn_input.setPlaceholderText("FASHN API キーを入力...")
+        else:
+            self.title_label.setText("APIキーの変更")
+            self.description_label.setText(
+                "APIキーを変更できます。\n"
+                "変更したいキーのみ入力してください（空欄のキーは変更されません）。"
+            )
+            self.complete_btn.setText("設定を保存")
+            # 既存キーがあることを示すプレースホルダー
+            gemini_exists = self.api_key_manager.get_api_key("gemini") is not None
+            fashn_exists = self.api_key_manager.get_api_key("fashn") is not None
+            self.gemini_input.setPlaceholderText(
+                "新しいキーを入力（設定済み）" if gemini_exists else "Gemini API キーを入力..."
+            )
+            self.fashn_input.setPlaceholderText(
+                "新しいキーを入力（設定済み）" if fashn_exists else "FASHN API キーを入力..."
+            )

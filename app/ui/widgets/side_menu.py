@@ -120,6 +120,22 @@ class SideMenu(QWidget):
         # スペーサー
         layout.addStretch()
 
+        # 区切り線（下部）
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.HLine)
+        separator2.setStyleSheet(f"background-color: {Colors.BORDER_LIGHT}; border: none; max-height: 1px;")
+        layout.addWidget(separator2)
+
+        layout.addSpacing(Spacing.SM)
+
+        # APIキー設定ボタン（下部に配置）
+        self.btn_api_key = SideMenuButton("APIキー設定", "🔑")
+        self.btn_api_key.clicked.connect(lambda: self._on_button_clicked("api_key_setup"))
+        layout.addWidget(self.btn_api_key)
+        self.buttons["api_key_setup"] = self.btn_api_key
+
+        layout.addSpacing(Spacing.SM)
+
     def _on_button_clicked(self, screen_name: str):
         """ボタンがクリックされた時"""
         # 全てのボタンのチェックを外す

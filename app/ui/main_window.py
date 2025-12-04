@@ -513,9 +513,14 @@ class MainWindow(QMainWindow):
         """指定した画面に遷移"""
         screen_map = {"api_key_setup": 0, "home": 1, "generation": 2, "edit": 3}
         index = screen_map.get(screen_name, 1)
+
+        # APIキー設定画面の場合、モードを設定
+        if screen_name == "api_key_setup":
+            # サイドメニューから遷移した場合は変更モード
+            self.api_key_setup_screen.set_mode(is_initial=False)
+
         self.content_stack.setCurrentIndex(index)
-        if screen_name != "api_key_setup":
-            self.side_menu.set_current_screen(screen_name)
+        self.side_menu.set_current_screen(screen_name)
 
     def _on_screen_changed(self, screen_name: str):
         """サイドメニューからの画面変更"""
@@ -2107,8 +2112,9 @@ Powered by:
         fashn_key = self.api_key_manager.load_api_key("fashn")
 
         if not gemini_key or not fashn_key:
-            # APIキーが未設定の場合、設定画面を表示
-            self._navigate_to("api_key_setup")
+            # APIキーが未設定の場合、初回設定モードで設定画面を表示
+            self.api_key_setup_screen.set_mode(is_initial=True)
+            self.content_stack.setCurrentIndex(0)
             # サイドメニューを非表示
             self.side_menu.setVisible(False)
         else:

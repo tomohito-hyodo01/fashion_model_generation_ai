@@ -3,7 +3,19 @@
     "allow": [
       "Bash(git add:*)",
       "Bash(git commit -m \"$(cat <<''EOF''\nUIアーキテクチャ刷新: マルチページUI対応\n\n- サイドメニュー + 3画面構成（ホーム/新規生成/チャット修正・履歴）に変更\n- QStackedWidgetによる画面切り替え機能を実装\n- ウィンドウアイコン・タイトル設定（タスクバー対応含む）\n- 出力枚数デフォルト1枚、動画関連の非活性制御\n- 参考人物選択時のモデル属性非活性化\n- プログレスバーを生成ボタン位置に表示（QStackedWidget切り替え）\n- ボタンデザイン統一（Styles.BUTTON_PRIMARY/SECONDARY適用）\n- メニューバー削除\n- スクロールバーデザイン統一\n- CHECK_BOX/COMBO_BOXのdisabledスタイル追加\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(powershell -ExecutionPolicy Bypass -File scripts/pack_win.ps1)",
+      "Bash(if [ -f \"dist/VirtualFashionTryOn.exe\" ])",
+      "Bash(then ls -lh dist/VirtualFashionTryOn.exe)",
+      "Bash(else echo \"EXE not found\")",
+      "Bash(fi)",
+      "Bash(if [ -d \"VirtualFashionTryOn_v2.0\" ])",
+      "Bash(then ls -lh VirtualFashionTryOn_v2.0/)",
+      "Bash(python:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "WebSearch",
+      "Bash(pip show:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

@@ -137,17 +137,20 @@ class BackgroundGalleryWidget(QWidget):
         
         layout.addLayout(grid_layout)
 
-        # カスタム背景エリア
-        custom_layout = QHBoxLayout()
+        layout.addSpacing(10)
 
-        # カスタム背景アップロードボタン
+        # カスタム背景アップロードボタン（中央配置）
         custom_btn = QPushButton("カスタム背景画像をアップロード")
         custom_btn.setStyleSheet(Styles.BUTTON_PRIMARY)
         custom_btn.setMinimumHeight(40)
         custom_btn.setCursor(Qt.PointingHandCursor)
         custom_btn.clicked.connect(self._upload_custom_background)
-        custom_layout.addWidget(custom_btn)
-        
+        layout.addWidget(custom_btn)
+
+        # カスタム背景プレビューエリア（中央配置）
+        preview_layout = QHBoxLayout()
+        preview_layout.addStretch()
+
         # カスタム背景プレビュー（選択時に表示）
         self.custom_preview_label = QLabel()
         self.custom_preview_label.setFixedSize(60, 60)
@@ -160,17 +163,17 @@ class BackgroundGalleryWidget(QWidget):
         """)
         self.custom_preview_label.setVisible(False)
         self.custom_preview_label.setScaledContents(True)
-        custom_layout.addWidget(self.custom_preview_label)
-        
+        preview_layout.addWidget(self.custom_preview_label)
+
         # カスタム背景ファイル名
         self.custom_filename_label = QLabel("")
         self.custom_filename_label.setStyleSheet("font-size: 9pt; color: #2ecc71; font-weight: bold;")
         self.custom_filename_label.setVisible(False)
-        custom_layout.addWidget(self.custom_filename_label)
-        
-        custom_layout.addStretch()
-        layout.addLayout(custom_layout)
-        
+        preview_layout.addWidget(self.custom_filename_label)
+
+        preview_layout.addStretch()
+        layout.addLayout(preview_layout)
+
         layout.addStretch()
     
     def _create_background_button(self, bg_id: str, bg_info: Dict[str, str]) -> QToolButton:
